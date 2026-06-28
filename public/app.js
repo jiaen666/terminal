@@ -234,7 +234,7 @@ function createTab(title, host, protocol) {
       // Capture command history for SSH/Telnet
       for (var i = 0; i < data.length; i++) {
         var ch = data[i];
-        if (ch === '') {
+        if (ch === '\r') {
           var cmd = tab._cmdBuf.trim();
           if (cmd && (tab.cmdHistory.length === 0 || tab.cmdHistory[tab.cmdHistory.length - 1] !== cmd)) {
             tab.cmdHistory.push(cmd);
@@ -1094,7 +1094,7 @@ function renderCmdHistory(tab) {
       row.innerHTML = '<span class="history-num">' + (idx + 1) + '</span><span class="history-cmd">' + escapeHtml(cmd) + '</span>';
       row.addEventListener('click', function() {
         hideCmdHistory();
-        sendWS({ type: 'input', tabId: tab.id, data: cmd + '' });
+        sendWS({ type: 'input', tabId: tab.id, data: cmd + '\r' });
       });
       list.appendChild(row);
     })(history[i], i);
