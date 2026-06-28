@@ -86,7 +86,7 @@ function reconnectActiveSessions() {
   });
 }
 
-function sendWS(data) { if (state.ws?.readyState === 1) state.ws.send(JSON.stringify(data)); }
+function sendWS(data) { console.log('sendWS:', data.type, 'readyState:', state.ws?.readyState); if (state.ws?.readyState === 1) state.ws.send(JSON.stringify(data)); else console.log('sendWS FAILED: ws not ready'); }
 
 function handleWS(msg) {
   const tab = findTab(msg.tabId);
@@ -105,6 +105,44 @@ function handleWS(msg) {
     case 'disconnected':
       if (tab) { tab.connected = false; tab._autoReconnect = false; if (tab.terminal) tab.terminal.writeln('\r\n\x1b[33m[Disconnected] ' + (msg.message || '') + '\x1b[0m'); else if (!tab._hadError) showCanvasError(tab, '断开连接'); tab._hadError = false; }
       updateStatusConn(); setStatus('已断开', false);
+      break;
+    case 'sftp-items':
+      // Only process if this is the most recent request
+      if (msg._reqId && msg._reqId !== sftpState._reqId) break;
+      if (msg.path === sftpState._pendingList) {
+        sftpState.items = msg.items;
+        sftpRenderItems(msg.items);
+        $('#sftp-status').textContent = msg.items.length + ' 项';
+      }
+      break;
+    case 'sftp-download-start':
+      sftpState._downloadSize = 0;
+      $('#sftp-status').textContent = '下载中...';
+      break;
+    case 'sftp-download-chunk':
+      (function() {
+        var b64 = msg.data;
+        var bin = atob(b64);
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        var blob = new Blob([bytes]);
+        if (window.showSaveFilePicker) {
+          window.showSaveFilePicker({ suggestedName: msg.fileName }).then(function(h) {
+            h.createWritable().then(function(w) { w.write(blob).then(function() { w.close(); $('#sftp-status').textContent = '已保存'; }); });
+          }).catch(function() { downloadBlob(blob, msg.fileName); });
+        } else {
+          downloadBlob(blob, msg.fileName);
+        }
+      })();
+      break;
+    case 'sftp-download-end':
+      break;
+    case 'sftp-upload-done':
+      sftpListDir(sftpState.currentPath);
+      $('#sftp-status').textContent = '上传完成';
+      break;
+    case 'sftp-error':
+      $('#sftp-status').textContent = '错误: ' + msg.message;
       break;
     case 'rdp-bitmap':
       if (tab?.canvas) renderRDPBitmap(tab, msg);
@@ -257,6 +295,20 @@ function switchTab(tabId) {
   try { tab.fitAddon?.fit(); } catch(e) {}
   if (tab.terminal) tab.terminal.focus();
   updateStatusConn();
+
+  // Auto-update SFTP panel to reflect the new active tab
+  var sftpModal = $('#sftp-modal');
+  if (sftpModal && !sftpModal.classList.contains('hidden') && tab.protocol === 'ssh' && tab.connected) {
+    sftpState.tabId = tab.id;
+    sftpState.host = tab.host;
+    sftpState.port = tab.port || 22;
+    sftpState.username = tab.username;
+    sftpState.password = tab.password || '';
+    sftpState.privateKey = tab.privateKey || '';
+    sftpState._reqId = Date.now();
+    $('#sftp-modal-title').textContent = '📁 文件传输 - ' + tab.username + '@' + tab.host;
+    sftpListDir(sftpState.currentPath);
+  }
 }
 
 function closeTab(tabId) {
@@ -851,6 +903,32 @@ function updateGroupSelect() {
 }
 
 // ===== Context Menus =====
+var _origShowContextMenu = showContextMenu;
+showContextMenu = function(x, y) {
+  _origShowContextMenu(x, y);
+  var menu = $('#context-menu');
+  if (!menu || !state.contextSessionId) return;
+  var session = state.sessions.find(function(s) { return s.id === state.contextSessionId; });
+  if (!session || session.protocol !== 'ssh') return;
+  var activeTab = state.tabs.find(function(t) {
+    return t.host === session.host && t.username === session.username && t.connected;
+  });
+  if (!activeTab) return; // no active SSH connection
+  session.tabId = activeTab.id;
+  var oldSftp = menu.querySelector('.sftp-item');
+  if (oldSftp) oldSftp.remove();
+  var sftpItem = document.createElement('div');
+  sftpItem.className = 'context-item sftp-item';
+  sftpItem.textContent = '📁 文件传输';
+  sftpItem.addEventListener('click', function() {
+    hideAllMenus();
+    openSftpPanel(session);
+  });
+  var delItem = menu.querySelector('.danger');
+  if (delItem) menu.insertBefore(sftpItem, delItem);
+  else menu.appendChild(sftpItem);
+};
+
 function showContextMenu(x, y) {
   dom.contextMenu.classList.remove('hidden');
   dom.contextMenu.style.left = x + 'px'; dom.contextMenu.style.top = y + 'px';
@@ -1020,6 +1098,148 @@ function showGroupModal(editId, parentId) {
 function hideGroupModal() {
   if (dom.connModal.classList.contains('hidden') && dom.quickModal.classList.contains('hidden')) resumeAllGuacKeyboards(); dom.groupModal.classList.add('hidden'); }
 
+
+// ===== SFTP File Transfer =====
+var sftpState = {
+  tabId: null, host: '', port: 22, username: '', password: '', privateKey: '',
+  currentPath: '/', items: [], selected: null, _reqId: 0,
+};
+
+function openSftpPanel(session) {
+  sftpState.tabId = session.tabId || null;
+  sftpState.host = session.host;
+  sftpState.port = session.port || 22;
+  sftpState.username = session.username;
+  sftpState.password = session.password || '';
+  sftpState.privateKey = session.privateKey || '';
+  sftpState.currentPath = '/';
+  sftpState._reqId = Date.now();
+  
+  $('#sftp-modal-title').textContent = '📁 文件传输 - ' + session.username + '@' + session.host;
+  $('#sftp-items').innerHTML = '<div class="sftp-empty">⏳ 正在连接...</div>';
+  $('#sftp-status').textContent = '';
+  $('#sftp-path').value = '/';
+  $('#sftp-modal').classList.remove('hidden');
+  
+  if (!sftpState.tabId) {
+    $('#sftp-status').textContent = '请先连接SSH终端';
+    $('#sftp-items').innerHTML = '<div class="sftp-empty">❌ 请先打开SSH终端连接</div>';
+    return;
+  }
+  sftpListDir('/');
+}
+
+function hideSftpModal() {
+  $('#sftp-modal').classList.add('hidden');
+}
+
+function sftpListDir(dirPath) {
+  $('#sftp-status').textContent = '加载中...';
+  sftpState.currentPath = dirPath;
+  $('#sftp-path').value = dirPath;
+  sftpState._pendingList = dirPath;
+  sftpState._reqId = Date.now();
+  sendWS({ type: 'sftp-list', tabId: sftpState.tabId, path: dirPath, _reqId: sftpState._reqId });
+}
+
+function sftpDownload(fileName) {
+  var filePath = sftpJoinPath(sftpState.currentPath, fileName);
+  sendWS({ type: 'sftp-download', tabId: sftpState.tabId, path: filePath });
+  $('#sftp-status').textContent = '下载中...';
+}
+
+function sftpRenderItems(items) {
+  var container = $('#sftp-items');
+  container.innerHTML = '';
+  if (!items || items.length === 0) {
+    container.innerHTML = '<div class="sftp-empty">📭 空目录</div>';
+    return;
+  }
+  items.forEach(function(item) {
+    var row = document.createElement('div');
+    row.className = 'sftp-item';
+    var isDir = item.type === 'd';
+    var isLink = item.type === 'l';
+    var isExec = !isDir && !isLink && (item.mode & 0o111);
+    var icon = isDir ? '📁' : (isLink ? '🔗' : (isExec ? '⚡' : '📄'));
+    var itemClass = isDir ? ' dir' : (isLink ? ' link' : (isExec ? ' exec' : ''));
+    var sizeText = isDir ? '' : formatFileSize(item.size);
+    row.innerHTML = '<span class="sftp-icon">' + icon + '</span>' +
+      '<span class="sftp-name' + itemClass + '">' + escapeHtml(item.name) + '</span>' +
+      '<span class="sftp-size">' + sizeText + '</span>' +
+      '<span class="sftp-mtime"></span>';
+    row.addEventListener('click', function() {
+      $$('.sftp-item').forEach(function(el) { el.classList.remove('selected'); });
+      row.classList.add('selected');
+      sftpState.selected = item;
+    });
+    row.addEventListener('dblclick', function() {
+      if (isDir) sftpListDir(sftpJoinPath(sftpState.currentPath, item.name));
+      else sftpDownload(item.name);
+    });
+    row.addEventListener('contextmenu', function(e) {
+      e.preventDefault();
+      $$('.sftp-item').forEach(function(el) { el.classList.remove('selected'); });
+      row.classList.add('selected');
+      sftpState.selected = item;
+      showSftpContextMenu(e.clientX, e.clientY, item);
+    });
+    container.appendChild(row);
+  });
+}
+
+
+function showSftpContextMenu(x, y, item) {
+  hideAllMenus();
+  var menu = $('#sftp-context-menu');
+  if (!menu) {
+    menu = document.createElement('div');
+    menu.id = 'sftp-context-menu';
+    menu.className = 'context-menu hidden';
+    document.body.appendChild(menu);
+  }
+  var isDir = item.type === 'd' || item.type === 'l';
+  menu.innerHTML = '';
+  
+  if (!isDir) {
+    var dl = document.createElement('div');
+    dl.className = 'context-item';
+    dl.textContent = '📥 下载';
+    dl.addEventListener('click', function() { hideAllMenus(); sftpDownload(item.name); });
+    menu.appendChild(dl);
+  }
+  
+  menu.classList.remove('hidden');
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  setTimeout(function() {
+    var close = function(e) { if (!menu.contains(e.target)) { menu.classList.add('hidden'); document.removeEventListener('click', close); } };
+    document.addEventListener('click', close);
+  }, 10);
+}
+
+function sftpJoinPath(base, name) {
+  if (base === '/') return '/' + name;
+  return base.replace(/\/$/, '') + '/' + name;
+}
+
+function formatFileSize(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  var i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+}
+
+function downloadBlob(blob, fileName) {
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = fileName;
+  document.body.appendChild(a); a.click();
+  setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  $('#sftp-status').textContent = '下载完成';
+}
+
+
 function updateProtocolUI() {
   const proto = $('#conn-protocol').value;
   const authFields = $('#ssh-auth-fields');
@@ -1109,8 +1329,8 @@ $('#welcome-quick-connect')?.addEventListener('click', () => showQuickModal());
 $('#btn-add-group').addEventListener('click', () => showGroupModal());
 $('#btn-refresh-sessions').addEventListener('click', loadAll);
 
-$$('.modal-close').forEach(b => b.addEventListener('click', () => { hideConnModal(); hideQuickModal(); hideGroupModal(); }));
-$$('.modal-overlay').forEach(o => o.addEventListener('click', () => { hideConnModal(); hideQuickModal(); hideGroupModal(); }));
+$$('.modal-close').forEach(b => b.addEventListener('click', () => { hideConnModal(); hideQuickModal(); hideGroupModal(); hideSftpModal(); }));
+$$('.modal-overlay').forEach(o => o.addEventListener('click', () => { hideConnModal(); hideQuickModal(); hideGroupModal(); hideSftpModal(); }));
 
 $('#conn-protocol').addEventListener('change', updateProtocolUI);
 $('#auth-type').addEventListener('change', updateAuthFields);
@@ -1122,6 +1342,46 @@ $('#btn-quick-cancel').addEventListener('click', hideQuickModal);
 $('#btn-group-submit').addEventListener('click', submitGroupForm);
 $('#group-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitGroupForm(); } });
 $('#btn-group-cancel').addEventListener('click', hideGroupModal);
+
+// SFTP toolbar events
+$('#sftp-btn-up').addEventListener('click', function() {
+  var p = sftpState.currentPath;
+  if (p === '/') return;
+  sftpListDir(p.substring(0, p.lastIndexOf('/')) || '/');
+});
+$('#sftp-btn-go').addEventListener('click', function() {
+  sftpListDir($('#sftp-path').value || '/');
+});
+$('#sftp-path').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') sftpListDir($('#sftp-path').value || '/');
+});
+$('#sftp-btn-refresh').addEventListener('click', function() {
+  sftpListDir(sftpState.currentPath);
+});
+$('#sftp-upload-input').addEventListener('change', function() {
+  var file = this.files[0];
+  if (!file) return;
+  if (!sftpState.tabId) { alert('请先连接SSH终端'); this.value = ''; return; }
+  
+  $('#sftp-status').textContent = '读取文件中...';
+  var totalSize = file.size;
+  $('#sftp-status').textContent = '读取中 0%...';
+  var reader = new FileReader();
+  reader.onprogress = function(e) {
+    if (e.lengthComputable) {
+      $('#sftp-status').textContent = '读取中 ' + Math.round(e.loaded/e.total*100) + '%...';
+    }
+  };
+  reader.onload = function() {
+    var base64 = reader.result.split(',')[1];
+    $('#sftp-status').textContent = '上传中...';
+    sftpState._uploadPath = sftpJoinPath(sftpState.currentPath, file.name);
+    sendWS({ type: 'sftp-upload', tabId: sftpState.tabId, path: sftpState._uploadPath, data: base64 });
+  };
+  reader.onerror = function() { $('#sftp-status').textContent = '读取文件失败'; };
+  reader.readAsDataURL(file);
+  this.value = '';
+});
 
 // Context menu actions
 dom.contextMenu.addEventListener('click', async (e) => {
@@ -1166,7 +1426,7 @@ document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.shiftKey && e.key === 'N') { e.preventDefault(); showConnModal(); }
   if (e.ctrlKey && e.shiftKey && e.key === 'Q') { e.preventDefault(); showQuickModal(); }
   if (e.ctrlKey && e.key === 'w') { e.preventDefault(); closeActiveTab(); }
-  if (e.key === 'Escape') { hideConnModal(); hideQuickModal(); hideGroupModal(); hideAllMenus(); }
+  if (e.key === 'Escape') { hideConnModal(); hideQuickModal(); hideGroupModal(); hideSftpModal(); hideAllMenus(); }
 });
 
 // ===== Auth =====

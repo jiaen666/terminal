@@ -180,6 +180,55 @@
     <div class="context-item danger" data-action="delete-group">🗑️ 删除分组</div>
   </div>
 
+
+  <!-- SFTP File Transfer Modal -->
+  <div id="sftp-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content" style="width:820px;height:560px;display:flex;flex-direction:column;">
+      <div class="modal-header">
+        <h3 id="sftp-modal-title">📁 文件传输</h3>
+        <button class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body" style="flex:1;display:flex;flex-direction:column;gap:0;padding:0;">
+        <!-- Toolbar -->
+        <div id="sftp-toolbar" style="display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">
+          <button id="sftp-btn-up" class="btn btn-secondary btn-sm" title="上级目录">⬆</button>
+          <input type="text" id="sftp-path" style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:13px;color:var(--text-primary);font-family:monospace;" placeholder="/" />
+          <button id="sftp-btn-go" class="btn btn-primary btn-sm">跳转</button>
+          <button id="sftp-btn-refresh" class="btn btn-secondary btn-sm">🔄</button>
+          <button id="sftp-btn-mkdir" class="btn btn-secondary btn-sm">📁+</button>
+          <label id="sftp-btn-upload" class="btn btn-primary btn-sm" style="cursor:pointer;">📤 上传<input type="file" id="sftp-upload-input" style="display:none;" /></label>
+          <span id="sftp-status" style="font-size:12px;color:var(--text-muted);margin-left:auto;"></span>
+        </div>
+        <!-- File list -->
+        <div id="sftp-file-list" style="flex:1;overflow-y:auto;padding:0;">
+          <div style="display:flex;align-items:center;padding:6px 16px;font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border);font-weight:600;background:var(--bg-primary);">
+            <span style="width:28px;"></span>
+            <span style="flex:1;">名称</span>
+            <span style="width:100px;text-align:right;">大小</span>
+            <span style="width:160px;text-align:right;">修改时间</span>
+          </div>
+          <div id="sftp-items"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SFTP Rename Modal -->
+  <div id="sftp-rename-modal" class="modal hidden" style="z-index:2000;">
+    <div class="modal-overlay" style="z-index:0;"></div>
+    <div class="modal-content" style="width:360px;z-index:1;">
+      <div class="modal-header"><h3>重命名</h3><button class="modal-close">&times;</button></div>
+      <div class="modal-body">
+        <div class="form-group"><label>新名称</label><input type="text" id="sftp-rename-input" /></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-sftp-rename-cancel" class="btn btn-secondary">取消</button>
+        <button id="btn-sftp-rename-submit" class="btn btn-primary">确定</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Move-to-group submenu -->
   <div id="move-menu" class="context-menu hidden"></div>
 

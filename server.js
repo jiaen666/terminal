@@ -491,6 +491,9 @@ wss.on('connection', (ws) => {
       case 'rdp-connect': handleRDPConnect(ws, data); break;
       case 'rdp-pointer': handleRDPPointer(data); break;
       case 'rdp-key': handleRDPKey(data); break;
+      case 'sftp-list': handleSftpList(ws, data); break;
+      case 'sftp-download': handleSftpDownload(ws, data); break;
+      case 'sftp-upload': handleSftpUpload(ws, data); break;
     }
   });
   
@@ -663,6 +666,94 @@ function handleTelnet(ws, data) {
   c.on('error', (e) => { send(ws, { type: 'error', tabId, message: 'Telnet: ' + e.message }); activeConnections.delete(tabId); });
   c.on('close', () => { send(ws, { type: 'disconnected', tabId, message: 'Telnet disconnected' }); activeConnections.delete(tabId); });
 }
+
+// ===== SFTP via Shell (uses existing SSH connection) =====
+function handleSftpList(ws, data) {
+  var conn = activeConnections.get(data.tabId);
+  if (!conn || !conn.client) return send(ws, { type: 'sftp-error', message: 'SSH not active' });
+  var dirPath = data.path || '/';
+  var cmd = 'ls -lA --time-style=long-iso ' + JSON.stringify(dirPath) + ' 2>/dev/null; echo __SFTP_DONE__';
+  conn.client.exec(cmd, function(err, stream) {
+    if (err) return send(ws, { type: 'sftp-error', message: 'exec: ' + err.message });
+    var buf = '';
+    stream.on('data', function(c) {
+      buf += c.toString('utf-8');
+      if (buf.indexOf('__SFTP_DONE__') >= 0) {
+        var lines = buf.split('\n');
+        var items = [];
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i].trim();
+          if (!line || line.indexOf('total ') === 0) continue;
+          if (line.indexOf('__SFTP_DONE__') >= 0) continue;
+          var parts = line.split(/\s+/);
+          if (parts.length < 8) continue;
+          var perms = parts[0];
+          var name = parts.slice(7).join(' ');
+          if (name.indexOf(' -> ') >= 0) name = name.split(' -> ')[0];
+          items.push({ name: name, type: perms[0] === 'd' ? 'd' : (perms[0] === 'l' ? 'l' : '-'), size: parseInt(parts[4]) || 0, mtime: 0, mode: parseInt(perms, 8) || 0 });
+        }
+        items.sort(function(a, b) {
+          if (a.type === 'd' && b.type !== 'd') return -1;
+          if (a.type !== 'd' && b.type === 'd') return 1;
+          return a.name.localeCompare(b.name);
+        });
+        send(ws, { type: 'sftp-items', tabId: data.tabId, path: dirPath, items });
+      }
+    });
+    stream.stderr.on('data', function(c) { send(ws, { type: 'sftp-error', message: c.toString('utf-8').trim() }); });
+  });
+}
+
+function handleSftpDownload(ws, data) {
+  var conn = activeConnections.get(data.tabId);
+  if (!conn || !conn.client) return send(ws, { type: 'sftp-error', message: 'SSH not active' });
+  var filePath = data.path;
+  var fileName = path.basename(filePath);
+  var endMarker = '__SFTP_END_' + Date.now() + '__';
+  var cmd = 'base64 < ' + JSON.stringify(filePath) + ' 2>/dev/null; echo ' + JSON.stringify(endMarker);
+  send(ws, { type: 'sftp-download-start', tabId: data.tabId, fileName: fileName, path: filePath });
+  conn.client.exec(cmd, function(err, stream) {
+    if (err) return send(ws, { type: 'sftp-error', message: 'exec: ' + err.message });
+    var buf = '';
+    stream.on('data', function(c) {
+      buf += c.toString('utf-8');
+      var idx = buf.indexOf(endMarker);
+      if (idx >= 0) {
+        var b64data = buf.substring(0, idx).replace(/[\r\n]/g, '');
+        send(ws, { type: 'sftp-download-chunk', tabId: data.tabId, data: b64data, fileName: fileName });
+        send(ws, { type: 'sftp-download-end', tabId: data.tabId });
+      }
+    });
+    stream.stderr.on('data', function(c) { send(ws, { type: 'sftp-error', message: c.toString('utf-8').trim() }); });
+  });
+}
+
+function handleSftpUpload(ws, data) {
+  var conn = activeConnections.get(data.tabId);
+  if (!conn || !conn.client) return send(ws, { type: 'sftp-error', message: 'SSH not active' });
+  var filePath = data.path;
+  var fileData = Buffer.from(data.data, 'base64');
+  var endMarker = '__SFTP_UPLOAD_' + Date.now() + '__';
+  // Use stdin pipe: base64 decode -> write to file
+  var cmd = 'base64 -d > ' + JSON.stringify(filePath) + ' 2>&1; echo ' + JSON.stringify(endMarker);
+  conn.client.exec(cmd, function(err, stream) {
+    if (err) return send(ws, { type: 'sftp-error', message: 'exec: ' + err.message });
+    var buf = '';
+    stream.on('data', function(c) {
+      buf += c.toString('utf-8');
+      if (buf.indexOf(endMarker) >= 0) {
+        var errMsg = buf.replace(endMarker, '').trim();
+        if (errMsg) send(ws, { type: 'sftp-error', message: errMsg });
+        else send(ws, { type: 'sftp-upload-done', tabId: data.tabId });
+      }
+    });
+    stream.stderr.on('data', function(c) { send(ws, { type: 'sftp-error', message: c.toString('utf-8').trim() }); });
+    // Write file data to stdin
+    stream.write(fileData);
+    stream.end();
+  });
+}
+
 
 // ===== SSH =====
 function handleSSH(ws, data) {
