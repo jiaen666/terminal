@@ -1,0 +1,66 @@
+{
+  "sessions": [
+    {
+      "id": "mqv361ndbidcl",
+      "name": "核心交换机",
+      "host": "172.30.3.254",
+      "port": 22,
+      "username": "jasolar",
+      "password": "njpc@1258",
+      "privateKey": "",
+      "protocol": "ssh",
+      "group": "g_mqv161op",
+      "description": ""
+    },
+    {
+      "id": "mqv3atsi9gdeh",
+      "name": "电池汇聚",
+      "host": "172.30.3.251",
+      "port": 22,
+      "username": "jasolar",
+      "password": "njpc@1258",
+      "privateKey": "",
+      "protocol": "ssh",
+      "group": "g_mqv161op",
+      "description": ""
+    },
+    {
+      "id": "mqv8wk217ibu1",
+      "name": "aaaaaaaaa",
+      "host": "172.30.64.6",
+      "port": 3389,
+      "username": "",
+      "password": "",
+      "privateKey": "",
+      "protocol": "rdp",
+      "group": "",
+      "description": ""
+    }
+  ],
+  "groups": [
+    {
+      "id": "default",
+      "name": "默认分组",
+      "order": 0,
+      "parentId": ""
+    },
+    {
+      "id": "g_mqv11aba",
+      "name": "jasolar",
+      "order": 1,
+      "parentId": ""
+    },
+    {
+      "id": "g_mqv161op",
+      "name": "义乌",
+      "parentId": "g_mqv11aba",
+      "order": 2
+    },
+    {
+      "id": "g_mqv16p0k",
+      "name": "奉贤",
+      "parentId": "g_mqv11aba",
+      "order": 3
+    }
+  ]
+}

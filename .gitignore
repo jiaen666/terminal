@@ -1,0 +1,11 @@
+node_modules/
+sessions.json
+.DS_Store
+*.log
+/tmp
+*.patch
+docker/*/Dockerfile.*
+docker/freerdp/
+docker/guacd-patched/
+docker/guacd-source/
+docker/rdp-vnc-bridge/

@@ -1,0 +1,36 @@
+services:
+  guacd:
+    image: registry.cn-hangzhou.aliyuncs.com/jiaendocker/super-terminal-guacd:latest
+    container_name: super-terminal-guacd
+    restart: unless-stopped
+    networks:
+      - super-terminal-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "4822"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  app:
+    image: registry.cn-hangzhou.aliyuncs.com/jiaendocker/super-terminal:latest
+    container_name: super-terminal-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - AUTH_PASSWORD=admin123
+      - GUACD_HOST=guacd
+    volumes:
+      - sessions-data:/app/data
+    networks:
+      - super-terminal-net
+    depends_on:
+      guacd:
+        condition: service_healthy
+
+networks:
+  super-terminal-net:
+    driver: bridge
+
+volumes:
+  sessions-data:

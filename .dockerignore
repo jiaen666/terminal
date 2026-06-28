@@ -1,0 +1,6 @@
+sessions.json
+.git
+.DS_Store
+*.log
+/tmp
+docker

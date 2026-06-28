@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RDP 远程桌面</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; height:100vh; }
+#display { width:100%; height:100%; }
+#status { position:fixed; bottom:8px; right:8px; background:rgba(0,0,0,0.7); color:#a6e3a1; padding:4px 10px; border-radius:4px; font:11px sans-serif; z-index:10; pointer-events:none; }
+#error { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.9); z-index:100; }
+#error div { color:#f38ba8; font:16px sans-serif; text-align:center; padding:20px; cursor:pointer; }
+</style>
+<script src="/guacamole-browser.js"></script>
+</head>
+<body>
+<div id="display"></div>
+<div id="status">加载中...</div>
+<div id="error" onclick="this.style.display='none'"><div id="error-msg"></div></div>
+
+<script>
+var elError = document.getElementById('error');
+var elMsg = document.getElementById('error-msg');
+var elStatus = document.getElementById('status');
+
+function fail(msg) {
+  elError.style.display = 'flex';
+  elMsg.innerHTML = msg;
+  elStatus.textContent = '错误';
+  elStatus.style.color = '#f38ba8';
+}
+
+var p = new URLSearchParams(location.search);
+var host = p.get('host'), port = p.get('port')||'3389',
+    username = p.get('username')||'', password = p.get('password')||'';
+
+if (!host) { fail('缺少主机地址'); }
+else if (typeof Guacamole === 'undefined') { fail('Guacamole 未加载，请刷新'); }
+else {
+  var ws = (location.protocol==='https:'?'wss:':'ws:')+location.host+
+    '/ws/guac?host='+encodeURIComponent(host)+
+    '&port='+port+'&username='+encodeURIComponent(username)+
+    '&password='+encodeURIComponent(password)+
+    '&width='+screen.width+'&height='+screen.height;
+
+  try {
+    var tun = new Guacamole.WebSocketTunnel(ws);
+    var cli = new Guacamole.Client(tun);
+    var dsp = cli.getDisplay();
+    document.getElementById('display').appendChild(dsp.getElement());
+
+    cli.onstatechange = function(s) {
+      var st = ['连接中','等待','等待','已连接','断开中','已断开'];
+      elStatus.textContent = st[s]||('状态:'+s);
+      if (s===6||s===7) fail('连接失败<br><small>'+(cli.getErrorMessage()||'')+'</small>');
+    };
+
+    var kb = new Guacamole.Keyboard(document);
+    kb.onkeydown = function(k) { cli.sendKeyEvent(1,k); };
+    kb.onkeyup = function(k) { cli.sendKeyEvent(0,k); };
+
+    var ms = new Guacamole.Mouse(dsp.getElement());
+    ms.onmousedown = ms.onmouseup = ms.onmousemove = function(st) { cli.sendMouseState(st); };
+
+    cli.connect();
+  } catch(e) { fail('初始化: '+e.message); }
+}
+</script>
+</body>
+</html>

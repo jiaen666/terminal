@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Test</title></head>
+<body>
+<h1>Test Page</h1>
+<div id="out"></div>
+
+<!-- Same scripts as main page -->
+<script src="/node_modules/xterm/lib/xterm.js"></script>
+<script src="/node_modules/guacamole-common-js/dist/esm/guacamole-common.min.js"></script>
+
+<script type="module">
+var out = document.getElementById('out');
+
+// Test 1: Basic DOM
+out.innerHTML += '<p style="color:green">✅ DOM works</p>';
+
+// Test 2: xterm.js global
+if (typeof Terminal !== 'undefined') {
+  out.innerHTML += '<p style="color:green">✅ Terminal loaded</p>';
+} else {
+  out.innerHTML += '<p style="color:red">❌ Terminal NOT loaded</p>';
+}
+
+// Test 3: Guacamole global
+if (typeof Guacamole !== 'undefined') {
+  out.innerHTML += '<p style="color:green">✅ Guacamole loaded</p>';
+  out.innerHTML += '<p>Guacamole keys: ' + Object.keys(Guacamole).slice(0,10).join(', ') + '</p>';
+} else {
+  out.innerHTML += '<p style="color:red">❌ Guacamole NOT loaded</p>';
+}
+
+// Test 4: Try creating a Guacamole tunnel (will fail but shouldn't crash)
+try {
+  var t = new Guacamole.WebSocketTunnel('ws://test/');
+  out.innerHTML += '<p style="color:green">✅ WebSocketTunnel created</p>';
+} catch(e) {
+  out.innerHTML += '<p style="color:red">❌ WebSocketTunnel error: ' + e.message + '</p>';
+}
+
+// Test 5: NoVNC import
+try {
+  var mod = await import('@novnc/novnc/rfb.js');
+  out.innerHTML += '<p style="color:green">✅ noVNC import works: ' + (mod.default ? 'RFB class' : '?') + '</p>';
+} catch(e) {
+  out.innerHTML += '<p style="color:red">❌ noVNC import error: ' + e.message + '</p>';
+}
+
+out.innerHTML += '<p><b>All tests done</b></p>';
+</script>
+</body>
+</html>

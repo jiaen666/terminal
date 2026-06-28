@@ -1,0 +1,600 @@
+const express = require('express');
+const http = require('http');
+const net = require('net');
+const url = require('url');
+const crypto = require('crypto');
+const { WebSocketServer } = require('ws');
+const { Client: SSHClient } = require('ssh2');
+const rdp = require('node-rdpjs');
+const fs = require('fs');
+const path = require('path');
+
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocketServer({ noServer: true });
+
+const PORT = process.env.PORT || 3000;
+const AUTH_PASSWORD = process.env.AUTH_PASSWORD || 'admin123';
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+
+// Token store: token -> expireTime
+const tokens = new Map();
+
+// ===== Static files =====
+app.use('/node_modules', express.static(path.join(__dirname, 'node_modules')));
+app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.json());
+
+// ===== Auth =====
+function authMiddleware(req, res, next) {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  if (!token || !tokens.has(token) || tokens.get(token) < Date.now()) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  tokens.set(token, Date.now() + 24 * 60 * 60 * 1000);
+  next();
+}
+
+function verifyToken(token) {
+  return tokens.has(token) && tokens.get(token) > Date.now();
+}
+
+app.post('/api/login', (req, res) => {
+  const { password } = req.body;
+  if (password !== AUTH_PASSWORD) return res.status(401).json({ error: '密码错误' });
+  const token = crypto.randomBytes(32).toString('hex');
+  tokens.set(token, Date.now() + 24 * 60 * 60 * 1000);
+  res.json({ token });
+});
+
+app.post('/api/logout', (req, res) => {
+  const token = (req.headers.authorization || '').replace('Bearer ', '');
+  tokens.delete(token);
+  res.json({ success: true });
+});
+
+app.get('/api/check-auth', authMiddleware, (req, res) => {
+  res.json({ authenticated: true });
+});
+
+// Protect all session/group APIs
+app.use('/api/sessions', authMiddleware);
+app.use('/api/groups', authMiddleware);
+
+// ===== Session Storage =====
+let savedSessions = [];
+let savedGroups = [];
+
+try {
+  if (fs.existsSync(SESSIONS_FILE)) {
+    const data = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf-8'));
+    savedSessions = data.sessions || (Array.isArray(data) ? data : []);
+    savedGroups = data.groups || [];
+    savedSessions.forEach(s => { if (!s.protocol) s.protocol = 'ssh'; if (!s.group) s.group = ''; });
+    savedGroups.forEach(g => { if (!g.parentId) g.parentId = ''; });
+  }
+} catch (e) { savedSessions = []; savedGroups = []; }
+
+function saveToDisk() {
+  fs.writeFileSync(SESSIONS_FILE, JSON.stringify({ sessions: savedSessions, groups: savedGroups }, null, 2));
+}
+
+// Migration: if data dir is empty, try loading from old path
+if (savedSessions.length === 0 && savedGroups.length <= 1) {
+  const oldFile = path.join(__dirname, 'sessions.json');
+  if (fs.existsSync(oldFile) && oldFile !== SESSIONS_FILE) {
+    try {
+      const oldData = JSON.parse(fs.readFileSync(oldFile, 'utf-8'));
+      if (oldData.sessions?.length > 0) {
+        savedSessions = oldData.sessions;
+        savedGroups = oldData.groups || savedGroups;
+        console.log('Migrated ' + savedSessions.length + ' sessions from old location');
+      }
+    } catch (e) { console.error('Migration failed:', e.message); }
+  }
+}
+if (savedGroups.length === 0) {
+  savedGroups.push({ id: 'default', name: '默认分组', order: 0, parentId: '' });
+}
+saveToDisk();
+
+// ===== REST: Sessions =====
+app.get('/api/sessions', (req, res) => {
+  res.json(savedSessions.map(s => ({
+    id: s.id, name: s.name, host: s.host, port: s.port,
+    username: s.username, password: s.password || '', privateKey: s.privateKey || '',
+    protocol: s.protocol || 'ssh', group: s.group || '', description: s.description || '',
+  })));
+});
+
+app.post('/api/sessions', (req, res) => {
+  const b = req.body;
+  if (!b.name || !b.host) return res.status(400).json({ error: 'name and host required' });
+  const proto = b.protocol || 'ssh';
+  const defaultPort = proto === 'telnet' ? 23 : proto === 'vnc' ? 5900 : proto === 'rdp' ? 3389 : 22;
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  const session = { id, name: b.name, host: b.host, port: b.port || defaultPort,
+    username: b.username || '', password: b.password || '', privateKey: b.privateKey || '',
+    protocol: proto, group: b.group || '', description: b.description || '' };
+  savedSessions.push(session); saveToDisk();
+  res.json({ id, name: session.name, host: session.host, port: session.port,
+    username: session.username, protocol: session.protocol, group: session.group, description: session.description });
+});
+
+app.put('/api/sessions/:id', (req, res) => {
+  const idx = savedSessions.findIndex(s => s.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  ['name','host','port','username','password','privateKey','protocol','group','description']
+    .forEach(f => { if (req.body[f] !== undefined) savedSessions[idx][f] = req.body[f]; });
+  saveToDisk(); res.json({ success: true });
+});
+
+app.delete('/api/sessions/:id', (req, res) => {
+  const idx = savedSessions.findIndex(s => s.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  savedSessions.splice(idx, 1); saveToDisk(); res.json({ success: true });
+});
+
+// ===== REST: Groups =====
+app.get('/api/groups', (req, res) => { res.json(savedGroups); });
+
+app.post('/api/groups', (req, res) => {
+  const { name, parentId } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const id = 'g_' + Date.now().toString(36);
+  const g = { id, name, parentId: parentId || '', order: savedGroups.length };
+  savedGroups.push(g); saveToDisk();
+  res.json(g);
+});
+
+app.put('/api/groups/:id', (req, res) => {
+  const idx = savedGroups.findIndex(g => g.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  if (req.body.name !== undefined) savedGroups[idx].name = req.body.name;
+  if (req.body.parentId !== undefined) savedGroups[idx].parentId = req.body.parentId;
+  saveToDisk(); res.json({ success: true });
+});
+
+app.delete('/api/groups/:id', (req, res) => {
+  const delId = req.params.id;
+  const idx = savedGroups.findIndex(g => g.id === delId);
+  if (idx === -1) return res.status(404).json({ error: 'Not found' });
+  const parentId = savedGroups[idx].parentId || '';
+  // Reassign child groups and sessions to parent
+  savedGroups.filter(g => g.parentId === delId).forEach(g => { g.parentId = parentId; });
+  savedSessions.forEach(s => { if (s.group === delId) s.group = parentId; });
+  savedGroups.splice(idx, 1); saveToDisk(); res.json({ success: true });
+});
+
+// ===== Active Connections (keyed by tabId) =====
+const activeConnections = new Map(); // tabId -> { type, client, stream, ws }
+
+// ===== HTTP Upgrade: WebSocket =====
+server.on('upgrade', (request, socket, head) => {
+  const pathname = url.parse(request.url).pathname;
+  if (pathname === '/ws/vnc') {
+    handleVNCUpgrade(request, socket, head);
+  } else if (pathname === '/ws/guac') {
+    handleGuacUpgrade(request, socket, head);
+  } else {
+    const query = url.parse(request.url, true).query;
+    if (!verifyToken(query.token || '')) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request));
+  }
+});
+
+// ===== Guacamole WebSocket Proxy (for RDP via embedded guacd) =====
+const GuacdClient = require('guacamole-lite/lib/GuacdClient');
+const GuacamoleParser = require('guacamole-lite/lib/vendor/GuacamoleParser.js');
+const { Logger } = require('guacamole-lite/lib/Logger');
+
+function handleGuacUpgrade(request, socket, head) {
+  const query = url.parse(request.url, true).query;
+  const host = query.host;
+  const port = parseInt(query.port) || 3389;
+  const username = query.username || '';
+  const password = query.password || '';
+  const domain = query.domain || '';
+  const width = parseInt(query.width) || 1280;
+  const height = parseInt(query.height) || 720;
+  const dpi = parseInt(query.dpi) || 96;
+
+  if (!host) {
+    socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+
+  // 'any' = negotiate (tries TLS first, may fail on self-signed certs)
+  // 'nla' = NLA with TLS (use with ignore-cert)
+  // 'rdp' = legacy RDP (no TLS cert needed, requires NLA disabled on server)
+  const security = process.env.RDP_SECURITY || 'any';
+  console.log(`Guac RDP connecting to ${host}:${port} as ${username || '(no user)'} [security=${security}]`);
+
+  const wsServer = new WebSocketServer({ noServer: true });
+  wsServer.handleUpgrade(request, socket, head, (ws) => {
+    const guacdHost = process.env.GUACD_HOST || '127.0.0.1';
+    var gc = new GuacdClient(
+      { host: guacdHost, port: 4822 },
+      'rdp',
+      {
+        hostname: host,
+        port: String(port),
+        username: username,
+        password: password,
+        domain: domain,
+        width: width,
+        height: height,
+        dpi: dpi,
+        security: security,
+        'ignore-cert': 'true',
+        'disable-auth': 'false',
+        'resize-method': 'reconnect',
+        'enable-wallpaper': 'false',
+        'enable-theming': 'false',
+        'enable-font-smoothing': 'true',
+        'enable-full-window-drag': 'false',
+        'enable-desktop-composition': 'false',
+        'enable-menu-animations': 'false',
+        'disable-bitmap-caching': 'false',
+        'disable-offscreen-caching': 'false',
+        'disable-glyph-caching': 'false',
+        'force-lossless': 'false',
+        audio: ['audio/L16'],
+        video: null,
+        image: ['image/png', 'image/jpeg'],
+        timezone: 'Asia/Shanghai',
+        'client-name': 'SuperTerminal',
+      },
+      new Logger('ERRORS')
+    );
+
+    gc.on('open', () => console.log('Guac RDP opened:', host));
+    
+    gc.on('data', (instruction) => {
+      if (ws.readyState === 1) ws.send(instruction);
+    });
+
+    gc.on('error', (err) => {
+      console.error('Guac error:', err.message);
+      if (ws.readyState === 1) {
+        ws.send(GuacamoleParser.toInstruction(['error', err.message, '']));
+        ws.close();
+      }
+    });
+
+    gc.on('close', (err) => {
+      if (ws.readyState === 1) ws.close();
+    });
+
+    ws.on('message', (data) => {
+      if (gc) gc.send(data.toString(), true);
+    });
+
+    ws.on('close', () => {
+      if (gc) { gc.close(); gc = null; }
+    });
+
+    ws.on('error', () => {
+      if (gc) { gc.close(); gc = null; }
+    });
+  });
+}
+
+// ===== VNC WebSocket Proxy =====
+function handleVNCUpgrade(request, socket, head) {
+  const query = url.parse(request.url, true).query;
+  const host = query.host, vport = parseInt(query.port) || 5900;
+  if (!host) { socket.write('HTTP/1.1 400 Bad Request\r\n\r\n'); socket.destroy(); return; }
+  console.log(`VNC proxy connecting to ${host}:${vport}`);
+  const vncSocket = new net.Socket(); let ws = null;
+  vncSocket.connect(vport, host, () => {
+    const wsServer = new WebSocketServer({ noServer: true });
+    wsServer.handleUpgrade(request, socket, head, (websocket) => {
+      ws = websocket;
+      ws.on('message', (d) => { if (vncSocket.writable) vncSocket.write(d); });
+      ws.on('close', () => { try { vncSocket.destroy(); } catch(e) {} });
+      ws.on('error', () => { try { vncSocket.destroy(); } catch(e) {} });
+    });
+  });
+  vncSocket.on('data', (d) => { if (ws?.readyState === 1) ws.send(d); });
+  vncSocket.on('error', () => { try { ws?.close(); socket.destroy(); } catch(e) {} });
+  vncSocket.on('close', () => { try { ws?.close(); } catch(e) {} });
+  setTimeout(() => { if (!ws && !vncSocket.destroyed) { try { vncSocket.destroy(); socket.destroy(); } catch(e) {} } }, 15000);
+}
+
+// ===== Main WebSocket (for SSH, Telnet, and terminal input/output) =====
+let wsIdCounter = 0;
+wss.on('connection', (ws) => {
+  const wsId = ++wsIdCounter;
+  console.log(`Main WS connected #${wsId}`);
+  
+  // Ping/pong keepalive
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  
+  ws.on('message', (msg) => {
+    let data; try { data = JSON.parse(msg.toString()); } catch { return; }
+    switch (data.type) {
+      case 'ssh-connect': handleSSH(ws, data); break;
+      case 'telnet-connect': handleTelnet(ws, data); break;
+      case 'input': case 'ssh-input': sendInput(ws, data); break;
+      case 'resize': case 'ssh-resize': sendResize(ws, data); break;
+      case 'disconnect': case 'ssh-disconnect': disconnect(ws, data); break;
+      case 'rdp-connect': handleRDPConnect(ws, data); break;
+      case 'rdp-pointer': handleRDPPointer(data); break;
+      case 'rdp-key': handleRDPKey(data); break;
+    }
+  });
+  
+  ws.on('close', () => {
+    console.log(`Main WS #${wsId} closed`);
+    // Graceful cleanup: mark connections as orphaned, don't kill them
+    for (const [tabId, conn] of activeConnections) {
+      if (conn.ws === ws) {
+        conn.orphaned = true;
+        // Clean up after 30 seconds if not reclaimed
+        const connRef = conn;
+        conn._orphanTimeout = setTimeout(() => {
+          if (connRef.orphaned) {
+            try { connRef.stream?.end(); } catch {}
+            try { connRef.client?.end(); } catch {}
+            try { connRef.client?.destroy?.(); } catch {}
+            try { connRef.client?.close?.(); } catch {}
+            activeConnections.delete(tabId);
+            console.log(`Orphan cleanup: ${tabId}`);
+          }
+        }, 30000);
+      }
+    }
+  });
+  
+  ws.on('error', () => ws.close());
+});
+
+// Keepalive interval - ping all clients every 10 seconds
+const keepaliveInterval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 10000);
+
+wss.on('close', () => clearInterval(keepaliveInterval));
+
+function send(ws, data) {
+  if (ws.readyState === 1) ws.send(JSON.stringify(data));
+}
+
+function sendInput(ws, data) {
+  const c = activeConnections.get(data.tabId);
+  if (c?.stream?.writable) c.stream.write(data.data);
+}
+
+function sendResize(ws, data) {
+  const c = activeConnections.get(data.tabId);
+  if (c?.stream && c.type === 'ssh') {
+    try { c.stream.setWindow(data.rows, data.cols, 0, 0); } catch {}
+  }
+}
+
+function disconnect(ws, data) {
+  if (data?.tabId) {
+    // Disconnect specific tab
+    const conn = activeConnections.get(data.tabId);
+    if (conn?.ws === ws) {
+      if (conn._orphanTimeout) clearTimeout(conn._orphanTimeout);
+      try { conn.stream?.end(); } catch {}
+      try { conn.client?.end(); } catch {}
+      try { conn.client?.destroy?.(); } catch {}
+      try { conn.client?.close?.(); } catch {}
+      activeConnections.delete(data.tabId);
+    }
+  }
+}
+
+// ===== RDP (node-rdpjs - native JS, no cert issues) =====
+function handleRDPConnect(ws, data) {
+  disconnect(ws, { tabId: data.tabId });
+  const { host, port, username, password, tabId, width, height } = data;
+  if (!host) { send(ws, { type: 'error', tabId, message: 'Host required' }); return; }
+  if (!username) { send(ws, { type: 'error', tabId, message: 'RDP需要用户名' }); return; }
+  
+  console.log('RDP (node-rdpjs) connecting to ' + host + ':' + (port || 3389) + ' as ' + (username || 'Administrator'));
+  
+  const client = rdp.createClient({
+    domain: data.domain || '',
+    userName: username || 'Administrator',
+    password: password || '',
+    enablePerf: true,
+    autoLogin: true,
+    decompress: true,
+    screen: { width: width || 1280, height: height || 720 },
+    locale: 'en',
+    logLevel: 'WARN',
+  });
+  
+  client.on('connect', () => {
+    activeConnections.set(tabId, { type: 'rdp', client, stream: null, ws });
+    send(ws, { type: 'connected', tabId });
+  });
+  
+  client.on('bitmap', (bm) => {
+    send(ws, {
+      type: 'rdp-bitmap', tabId,
+      destTop: bm.destTop, destLeft: bm.destLeft,
+      destBottom: bm.destBottom, destRight: bm.destRight,
+      width: bm.width, height: bm.height,
+      bitsPerPixel: bm.bitsPerPixel, isCompress: bm.isCompress,
+      data: bm.data.toString('base64')
+    });
+  });
+  
+  client.on('error', (e) => {
+    var msg = e.message || '';
+    if (msg.indexOf('NEG_FAILURE') >= 0) msg = 'RDP协议协商失败 - 服务器要求NLA。请在Windows上关闭网络级身份验证';
+    else if (msg.indexOf('NLA_NOT_SUPPORTED') >= 0) msg = 'RDP不支持NLA认证';
+    else msg = 'RDP: ' + msg;
+    send(ws, { type: 'error', tabId, message: msg });
+    activeConnections.delete(tabId);
+  });
+  
+  client.on('close', () => {
+    send(ws, { type: 'disconnected', tabId, message: 'RDP disconnected' });
+    activeConnections.delete(tabId);
+  });
+  
+  client.connect(host, port || 3389);
+}
+
+function handleRDPPointer(data) {
+  const rc = activeConnections.get(data.tabId);
+  if (rc?.client) rc.client.sendPointerEvent(data.x, data.y, data.button || 1, data.isPressed);
+}
+
+function handleRDPKey(data) {
+  const rc = activeConnections.get(data.tabId);
+  if (rc?.client) rc.client.sendKeyEventScancode(data.scancode, data.isPressed);
+}
+
+
+// ===== Telnet =====
+const IAC = 255, DONT = 254, DO = 253, WONT = 252, WILL = 251, SB = 250, SE = 240;
+
+function handleTelnet(ws, data) {
+  disconnect(ws, { tabId: data.tabId });
+  const { host, port, tabId, termCols, termRows } = data;
+  if (!host) { send(ws, { type: 'error', tabId, message: 'Host required' }); return; }
+  const c = new net.Socket(); let buf = Buffer.alloc(0);
+  c.setKeepAlive(true, 10000);
+  c.connect(port || 23, host, () => {
+    activeConnections.set(tabId, { type: 'telnet', client: c, stream: c, ws });
+    send(ws, { type: 'connected', tabId });
+    c.write(Buffer.from([IAC, SB, 31, (termCols || 80) >> 8, (termCols || 80) & 0xFF, (termRows || 24) >> 8, (termRows || 24) & 0xFF, IAC, SE]));
+  });
+  c.on('data', (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    while (buf.length > 0) {
+      const idx = buf.indexOf(IAC);
+      if (idx === -1) { send(ws, { type: 'output', tabId, data: buf.toString('binary') }); buf = Buffer.alloc(0); break; }
+      if (idx > 0) send(ws, { type: 'output', tabId, data: buf.subarray(0, idx).toString('binary') });
+      if (buf.length < idx + 2) break;
+      const cmd = buf[idx + 1];
+      if (cmd === IAC) { send(ws, { type: 'output', tabId, data: String.fromCharCode(IAC) }); buf = buf.subarray(idx + 2); continue; }
+      if (buf.length < idx + 3) break;
+      const opt = buf[idx + 2];
+      const reply = cmd === WILL ? [IAC, opt === 1 ? DO : DONT, opt]
+        : cmd === DO ? [IAC, (opt === 3 || opt === 31 || opt === 24) ? WILL : WONT, opt]
+        : cmd === DONT ? [IAC, WONT, opt]
+        : cmd === WONT ? [IAC, DONT, opt] : null;
+      if (reply) c.write(Buffer.from(reply));
+      else if (cmd === SB) { const se = buf.indexOf(SE, idx + 3); if (se === -1) break; buf = buf.subarray(se + 1); continue; }
+      buf = buf.subarray(idx + 3);
+    }
+  });
+  c.on('error', (e) => { send(ws, { type: 'error', tabId, message: 'Telnet: ' + e.message }); activeConnections.delete(tabId); });
+  c.on('close', () => { send(ws, { type: 'disconnected', tabId, message: 'Telnet disconnected' }); activeConnections.delete(tabId); });
+}
+
+// ===== SSH =====
+function handleSSH(ws, data) {
+  disconnect(ws, { tabId: data.tabId });
+  const { host, port, username, password, privateKey, tabId, termCols, termRows } = data;
+  if (!host || !username) { send(ws, { type: 'error', tabId, message: 'Host and username required' }); return; }
+  const ssh = new SSHClient();
+  activeConnections.set(tabId, { type: 'ssh', client: ssh, stream: null, ws });
+  ssh.on('ready', () => {
+    ssh.shell({ term: 'xterm-256color', cols: termCols || 80, rows: termRows || 24 }, (err, stream) => {
+      if (err) { send(ws, { type: 'error', tabId, message: 'Shell: ' + err.message }); ssh.end(); return; }
+      const cn = activeConnections.get(tabId); if (cn) cn.stream = stream;
+      send(ws, { type: 'connected', tabId });
+      stream.on('data', (c) => send(ws, { type: 'output', tabId, data: c.toString('utf-8') }));
+      stream.stderr.on('data', (c) => send(ws, { type: 'output', tabId, data: c.toString('utf-8') }));
+      stream.on('close', () => { send(ws, { type: 'disconnected', tabId, message: 'SSH closed' }); ssh.end(); activeConnections.delete(tabId); });
+    });
+  });
+  ssh.on('error', (e) => { send(ws, { type: 'error', tabId, message: e.message }); activeConnections.delete(tabId); });
+  ssh.on('close', () => { send(ws, { type: 'disconnected', tabId, message: 'SSH closed' }); activeConnections.delete(tabId); });
+  ssh.connect({
+    host, port: port || 22, username, readyTimeout: 30000,
+    keepaliveInterval: 10000, keepaliveCountMax: 3,
+    algorithms: {
+      kex: ['ecdh-sha2-nistp256','ecdh-sha2-nistp384','ecdh-sha2-nistp521','diffie-hellman-group-exchange-sha256','diffie-hellman-group14-sha256','diffie-hellman-group16-sha512','diffie-hellman-group18-sha512','diffie-hellman-group14-sha1'],
+      cipher: ['aes128-ctr','aes192-ctr','aes256-ctr','aes128-gcm@openssh.com','aes256-gcm@openssh.com','aes256-cbc'],
+      serverHostKey: ['ssh-rsa','ecdsa-sha2-nistp256','ecdsa-sha2-nistp384','ecdsa-sha2-nistp521','ssh-ed25519'],
+      hmac: ['hmac-sha2-256','hmac-sha2-512','hmac-sha1']
+    },
+    ...(password ? { password, tryKeyboard: true } : {}),
+    ...(privateKey ? { privateKey, passphrase: password || undefined } : {}),
+  });
+}
+
+// ===== RDP-to-VNC Bridge API =====
+const { spawn } = require('child_process');
+const bridgeProcesses = new Map(); // id -> { xvfb, xrdp, xvnc, displayNum, vncPort }
+
+app.post('/api/rdp-bridge', authMiddleware, (req, res) => {
+  const { host, port, username, password } = req.body;
+  if (!host || !username) return res.status(400).json({ error: 'host and username required' });
+  
+  const displayNum = 90 + Math.floor(Math.random() * 20);
+  const vncPort = 5900 + Math.floor(Math.random() * 100);
+  const id = 'bridge_' + Date.now().toString(36);
+  
+  console.log('Starting RDP bridge: ' + host + ':' + (port || 3389) + ' as ' + username + ' -> VNC :' + vncPort);
+  
+  // Kill any existing Xvfb on this display
+  try { spawn('kill', ['-9', `$(cat /tmp/.X${displayNum}-lock 2>/dev/null)`], {shell: true}); } catch(e) {}
+  try { spawn('rm', ['-f', `/tmp/.X${displayNum}-lock`, `/tmp/.X11-unix/X${displayNum}`]); } catch(e) {}
+  
+  // Start Xvfb
+  const xvfb = spawn('Xvfb', [':' + displayNum, '-screen', '0', '1280x720x24']);
+  xvfb.stderr.on('data', (d) => {});
+  
+  setTimeout(() => {
+    // Start xfreerdp with cert-ignore
+    const xrdp = spawn('xfreerdp3', [
+      '/v:' + host + ':' + (port || 3389),
+      '/u:' + username,
+      '/p:' + (password || ''),
+      '/cert:ignore', '/sec:nla',
+      '/w:1280', '/h:720',
+      '/network:auto', '/gfx',
+      '+fonts', '+clipboard'
+    ], { env: { ...process.env, DISPLAY: ':' + displayNum } });
+    
+    setTimeout(() => {
+      // Start x11vnc
+      const xvnc = spawn('x11vnc', [
+        '-display', ':' + displayNum,
+        '-rfbport', String(vncPort),
+        '-forever', '-shared', '-nopw', '-quiet'
+      ]);
+      
+      bridgeProcesses.set(id, { xvfb, xrdp, xvnc, displayNum, vncPort });
+      
+      res.json({ id, vncPort, host: '127.0.0.1' });
+      console.log('RDP bridge ready: id=' + id + ' vncPort=' + vncPort);
+    }, 3000);
+  }, 1000);
+});
+
+app.delete('/api/rdp-bridge/:id', authMiddleware, (req, res) => {
+  const bp = bridgeProcesses.get(req.params.id);
+  if (bp) {
+    try { bp.xvnc.kill(); } catch(e) {}
+    try { bp.xrdp.kill(); } catch(e) {}
+    try { bp.xvfb.kill(); } catch(e) {}
+    bridgeProcesses.delete(req.params.id);
+  }
+  res.json({ success: true });
+});
+
+server.listen(PORT, () => console.log(`Super Terminal running at http://localhost:${PORT}`));

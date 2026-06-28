@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Super Terminal</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <link rel="stylesheet" href="/node_modules/xterm/css/xterm.css?v=7" />
+  <link rel="stylesheet" href="/style.css?v=7" />
+    <script src="/guacamole-browser.js?v=7"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "@novnc/novnc": "/node_modules/@novnc/novnc/core/rfb.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <noscript>
+    <div style="background:#1e1e2e;color:#f38ba8;padding:40px;font-family:sans-serif;text-align:center;height:100vh;display:flex;align-items:center;justify-content:center;">
+      <div><h1>⚠️ JavaScript 未启用</h1><p>Super Terminal 需要 JavaScript 才能运行。</p></div>
+    </div>
+  </noscript>
+
+  <header id="header">
+    <div class="header-left"><span class="logo">⚡ Super Terminal</span></div>
+    <div class="header-right">
+      <button id="btn-new-conn" class="header-btn">+ 新建连接</button>
+      <button id="btn-logout" class="header-btn" style="background:var(--bg-tertiary);color:var(--text-secondary);margin-left:6px;">登出</button>
+    </div>
+  </header>
+
+  <div id="main-container">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div id="sidebar-header">
+        <span>📁 会话列表</span>
+        <div class="sidebar-actions">
+          <button id="btn-add-group" class="icon-btn" title="新建分组">📂+</button>
+          <button id="btn-refresh-sessions" class="icon-btn" title="刷新">🔄</button>
+        </div>
+      </div>
+      <div id="group-list"></div>
+    </aside>
+
+    <div id="resize-handle"></div>
+
+    <!-- Terminal Area -->
+    <div id="terminal-area">
+      <div id="tab-bar">
+        <div class="tab active" data-tabid="welcome">
+          <span class="tab-title">🏠 欢迎</span>
+          <span class="tab-close hidden">&times;</span>
+        </div>
+        <div id="tab-bar-spacer"></div>
+      </div>
+
+      <div id="terminal-container">
+        <div id="tab-content-welcome" class="tab-content active">
+          <div class="welcome-page">
+            <div class="welcome-logo">⚡</div>
+            <h1>Super Terminal</h1>
+            <p class="welcome-desc">支持 SSH · Telnet · VNC · RDP 的超级终端</p>
+            <div class="welcome-actions">
+              <button class="welcome-btn primary" id="welcome-new-conn">🔌 新建连接</button>
+              <button class="welcome-btn" id="welcome-quick-connect">⚡ 快速连接</button>
+            </div>
+            <div class="welcome-shortcuts">
+              <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> 新建连接</div>
+              <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd> 快速连接</div>
+              <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>W</kbd> 关闭标签</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="status-bar">
+        <span id="status-text">就绪</span>
+        <span id="status-conn">未连接</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connection Modal -->
+  <div id="conn-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-title">新建连接</h3>
+        <button class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group"><label>连接名称</label><input type="text" id="conn-name" placeholder="例如：生产服务器" /></div>
+        <div class="form-row">
+          <div class="form-group"><label>协议</label>
+            <select id="conn-protocol">
+              <option value="ssh">SSH (终端)</option>
+              <option value="telnet">Telnet (终端)</option>
+              <option value="vnc">VNC (桌面)</option>
+              <option value="rdp">RDP (桌面)</option>
+            </select>
+          </div>
+          <div class="form-group"><label>主机地址 <span class="required">*</span></label><input type="text" id="conn-host" placeholder="192.168.1.1" /></div>
+          <div class="form-group" style="max-width:90px;flex:0 0 90px;"><label>端口</label><input type="number" id="conn-port" value="22" /></div>
+        </div>
+        <div class="form-group"><label>分组</label>
+          <select id="conn-group"><option value="">默认分组</option></select>
+        </div>
+        <div id="ssh-auth-fields">
+          <div class="form-group"><label>用户名</label><input type="text" id="conn-username" placeholder="root" /></div>
+          <div class="form-group"><label>认证方式</label>
+            <select id="auth-type"><option value="password">密码</option><option value="key">密钥</option></select>
+          </div>
+          <div class="form-group" id="password-group"><label>密码</label><input type="password" id="conn-password" placeholder="输入密码" /></div>
+          <div class="form-group hidden" id="key-group"><label>私钥</label><textarea id="conn-privatekey" rows="4" placeholder="粘贴私钥..."></textarea></div>
+        </div>
+        <div class="form-group"><label>描述</label><input type="text" id="conn-description" placeholder="可选" /></div>
+      </div>
+      <div class="modal-footer">
+        <label class="checkbox-label"><input type="checkbox" id="conn-save" checked /> 保存到会话列表</label>
+        <div><button id="btn-conn-cancel" class="btn btn-secondary">取消</button>
+        <button id="btn-conn-submit" class="btn btn-primary">连接</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick Connect Modal -->
+  <div id="quick-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content quick-modal">
+      <div class="modal-header"><h3>快速连接</h3><button class="modal-close">&times;</button></div>
+      <div class="modal-body">
+        <div class="form-group"><label>协议</label>
+          <select id="quick-protocol">
+            <option value="ssh">SSH</option><option value="telnet">Telnet</option>
+            <option value="vnc">VNC</option><option value="rdp">RDP</option>
+          </select>
+        </div>
+        <div class="form-group"><label>主机地址 <span class="required">*</span></label><input type="text" id="quick-host" placeholder="user@host:port 或 host" /></div>
+        <div class="form-group"><label>密码</label><input type="password" id="quick-password" /></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-quick-cancel" class="btn btn-secondary">取消</button>
+        <button id="btn-quick-submit" class="btn btn-primary">连接</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Group Modal -->
+  <div id="group-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content" style="width:360px;">
+      <div class="modal-header"><h3 id="group-modal-title">新建分组</h3><button class="modal-close">&times;</button></div>
+      <div class="modal-body">
+        <div class="form-group"><label>分组名称</label><input type="text" id="group-name" placeholder="例如：生产环境" /></div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-group-cancel" class="btn btn-secondary">取消</button>
+        <button id="btn-group-submit" class="btn btn-primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Context Menu -->
+  <div id="context-menu" class="context-menu hidden">
+    <div class="context-item" data-action="edit">✏️ 编辑</div>
+    <div class="context-item" data-action="duplicate">📋 复制</div>
+    <div class="context-item" data-action="move">📂 移动到分组</div>
+    <div class="context-separator"></div>
+    <div class="context-item danger" data-action="delete">🗑️ 删除</div>
+  </div>
+
+  <!-- Group Context Menu -->
+  <div id="group-context-menu" class="context-menu hidden">
+    <div class="context-item" data-action="new-subgroup">📂 新建子分组</div>
+    <div class="context-item" data-action="rename-group">✏️ 重命名</div>
+    <div class="context-separator"></div>
+    <div class="context-item danger" data-action="delete-group">🗑️ 删除分组</div>
+  </div>
+
+  <!-- Move-to-group submenu -->
+  <div id="move-menu" class="context-menu hidden"></div>
+
+  <script src="/node_modules/xterm/lib/xterm.js?v=7"></script>
+  <script src="/node_modules/@xterm/addon-fit/lib/addon-fit.js?v=7"></script>
+  <script src="/node_modules/@xterm/addon-search/lib/addon-search.js?v=7"></script>
+  <script src="/node_modules/@xterm/addon-web-links/lib/addon-web-links.js?v=7"></script>
+  <script type="module" src="/app.js?v=7"></script>
+</body>
+</html>

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>诊断页面</title>
+<style>
+body { background: #1e1e2e; color: #cdd6f4; font-family: sans-serif; padding: 40px; }
+h1 { color: #89b4fa; }
+.ok { color: #a6e3a1; }
+.err { color: #f38ba8; }
+.item { margin: 8px 0; padding: 8px; background: #313244; border-radius: 6px; }
+</style>
+</head>
+<body>
+<h1>🔍 Super Terminal 诊断</h1>
+<div id="results"></div>
+
+<script>
+var results = document.getElementById('results');
+var items = [];
+
+function addItem(label, ok, detail) {
+  var div = document.createElement('div');
+  div.className = 'item';
+  div.innerHTML = '<span class="' + (ok ? 'ok' : 'err') + '">' + (ok ? '✅' : '❌') + '</span> ' + label + (detail ? ': ' + detail : '');
+  results.appendChild(div);
+}
+
+// Test 1: Server connection
+addItem('页面加载', true, '诊断页面正常渲染');
+
+// Test 2: xterm.js loaded?
+setTimeout(function() {
+  if (typeof Terminal !== 'undefined') {
+    addItem('xterm.js 加载', true, 'Terminal v' + (Terminal.version || '?'));
+  } else {
+    addItem('xterm.js 加载', false, 'Terminal 未定义 - CDN或本地文件加载失败');
+  }
+
+  if (typeof FitAddon !== 'undefined') {
+    addItem('FitAddon 加载', true, 'OK');
+  } else {
+    addItem('FitAddon 加载', false, '未定义');
+  }
+
+  if (typeof SearchAddon !== 'undefined') {
+    addItem('SearchAddon 加载', true, 'OK');
+  } else {
+    addItem('SearchAddon 加载', false, '未定义');
+  }
+
+  if (typeof WebLinksAddon !== 'undefined') {
+    addItem('WebLinksAddon 加载', true, 'OK');
+  } else {
+    addItem('WebLinksAddon 加载', false, '未定义');
+  }
+
+  // Try to create a terminal
+  try {
+    var term = new Terminal({ rows: 5, cols: 40 });
+    var wrapper = document.createElement('div');
+    wrapper.style.cssText = 'width:600px;height:120px;margin-top:10px;border:2px solid #45475a;border-radius:4px;';
+    document.body.appendChild(wrapper);
+    term.open(wrapper);
+    term.write('\x1b[1;32m✅ Terminal 正常工作!\x1b[0m\r\n欢迎使用 Super Terminal');
+    addItem('Terminal 实例化', true, '终端渲染成功');
+  } catch(e) {
+    addItem('Terminal 实例化', false, e.message);
+  }
+}, 500);
+</script>
+
+<!-- 和主页面相同的脚本加载 -->
+<script src="/node_modules/xterm/lib/xterm.js"></script>
+<script src="/node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+<script src="/node_modules/@xterm/addon-search/lib/addon-search.js"></script>
+<script src="/node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
+</body>
+</html>
