@@ -1,5 +1,8 @@
 services:
   guacd:
+    build:
+      context: ./docker/guacd-ubuntu
+      dockerfile: Dockerfile
     image: registry.cn-hangzhou.aliyuncs.com/jiaendocker/super-terminal-guacd:latest
     container_name: super-terminal-guacd
     restart: unless-stopped
@@ -12,6 +15,9 @@ services:
       retries: 3
 
   app:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: registry.cn-hangzhou.aliyuncs.com/jiaendocker/super-terminal:latest
     container_name: super-terminal-app
     restart: unless-stopped

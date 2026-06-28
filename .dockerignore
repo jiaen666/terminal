@@ -1,6 +1,12 @@
-sessions.json
+node_modules/
 .git
+.gitignore
 .DS_Store
 *.log
-/tmp
-docker
+docker/
+sessions.json
+*.bak
+*.patch
+*.py
+*.sh
+!docker/guacd-ubuntu/
