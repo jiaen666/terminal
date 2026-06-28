@@ -1488,8 +1488,36 @@ async function apiFetch(url, options = {}) {
   return res;
 }
 
+// ===== Theme Toggle =====
+function toggleTheme() {
+  var body = document.querySelector('html');
+  var isLight = body.classList.toggle('theme-light');
+  localStorage.setItem('st_theme', isLight ? 'light' : 'dark');
+  // Reload xterm theme
+  state.tabs.forEach(function(tab) {
+    if (tab.terminal) {
+      tab.terminal.setOption('theme', {
+        background: isLight ? '#fafafa' : '#0d0d0d',
+        foreground: isLight ? '#1a1a2e' : '#cdd6f4',
+        cursor: isLight ? '#1a6fc4' : '#89b4fa',
+      });
+    }
+  });
+}
+
+function initTheme() {
+  var saved = localStorage.getItem('st_theme');
+  if (saved === 'light') {
+    document.querySelector('html').classList.add('theme-light');
+  }
+}
+
+$('#btn-theme').addEventListener('click', toggleTheme);
+
 // ===== Init =====
 $('#btn-toggle-sidebar').addEventListener('click', toggleSidebar);
+
+initTheme();
 
 if (!getToken()) { location.href = '/login.html'; } else {
   connectWebSocket();
