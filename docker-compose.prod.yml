@@ -15,6 +15,19 @@ services:
       timeout: 5s
       retries: 3
 
+  bridge:
+    image: registry.cn-hangzhou.aliyuncs.com/jiaendocker/super-terminal-guacd:latest
+    container_name: super-terminal-bridge
+    command: python3 /usr/local/bin/bridge-api.py
+    restart: unless-stopped
+    networks:
+      - super-terminal-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "5998"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
   app:
     image: registry.cn-hangzhou.aliyuncs.com/jiaendocker/super-terminal:latest
     container_name: super-terminal-app
@@ -24,7 +37,7 @@ services:
     environment:
       - AUTH_PASSWORD=admin123         # 网页登录密码，请修改
       - GUACD_HOST=guacd               # guacd 容器名
-      - BRIDGE_HOST=guacd              # RDP/VNC 桥接地址
+      - BRIDGE_HOST=bridge             # RDP/VNC 桥接容器名
       - RDP_SECURITY=any               # RDP 安全模式: nla | tls | rdp | any
       - RDP_TUNNEL_PORT_START=13500    # RDP 隧道起始端口
     volumes:
@@ -33,6 +46,8 @@ services:
       - super-terminal-net
     depends_on:
       guacd:
+        condition: service_healthy
+      bridge:
         condition: service_healthy
 
 networks:
