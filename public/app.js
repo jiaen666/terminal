@@ -223,14 +223,26 @@ function toggleSidebar() {
   var collapsed = sidebar.classList.toggle('collapsed');
   handle.classList.toggle('collapsed', collapsed);
   btn.classList.toggle('collapsed', collapsed);
-  btn.textContent = collapsed ? '▶' : '◀';
+  btn.textContent = '◀';
   btn.title = collapsed ? '展开侧边栏' : '折叠侧边栏';
+  // Update tooltips for collapsed icons
+  updateCollapsedTooltips();
   // Trigger resize on active tab's terminal/display
   setTimeout(function() {
     var tab = state.tabs.find(function(t) { return t.id === state.activeTabId; });
     if (tab && tab.fitAddon) { try { tab.fitAddon.fit(); } catch(e) {} }
     if (tab && tab.terminal) { try { tab.fitAddon.fit(); } catch(e) {} }
   }, 300);
+}
+
+function updateCollapsedTooltips() {
+  $$('#group-list .session-item').forEach(function(item) {
+    var nameEl = item.querySelector('.session-name');
+    var hostEl = item.querySelector('.session-host');
+    var name = nameEl ? nameEl.textContent : '';
+    var host = hostEl ? hostEl.textContent : '';
+    item.setAttribute('data-tooltip', name + '\n' + host);
+  });
 }
 
 function switchTab(tabId) {
@@ -675,7 +687,7 @@ async function moveSession(sessionId, groupId) {
   await updateSession(sessionId, { group: groupId });
 }
 
-function renderAll() { renderGroupList(); updateGroupSelect(); }
+function renderAll() { renderGroupList(); updateGroupSelect(); updateCollapsedTooltips(); }
 
 function renderGroupList() {
   dom.groupList.innerHTML = '';
