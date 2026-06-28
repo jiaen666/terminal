@@ -172,12 +172,6 @@ function createTab(title, host, protocol) {
   const spacer = $('#tab-bar-spacer');
   dom.tabBar.insertBefore(tabEl, spacer);
 
-  // Sidebar toggle
-  if (!$('#btn-toggle-sidebar')._init) {
-    $('#btn-toggle-sidebar')._init = true;
-    $('#btn-toggle-sidebar').addEventListener('click', toggleSidebar);
-  }
-
   let tab = {
     id: tabId, title: shortTitle, host, protocol,
     username: '', password: '', port: 3389,
@@ -274,12 +268,10 @@ function toggleSidebar() {
 }
 
 function updateCollapsedTooltips() {
-  $$('#group-list .session-item').forEach(function(item) {
-    var nameEl = item.querySelector('.session-name');
-    var hostEl = item.querySelector('.session-host');
+  $$('#group-list .group-header').forEach(function(header) {
+    var nameEl = header.querySelector('.group-name');
     var name = nameEl ? nameEl.textContent : '';
-    var host = hostEl ? hostEl.textContent : '';
-    item.setAttribute('data-tooltip', name + '\n' + host);
+    header.setAttribute('data-tooltip', name);
   });
 }
 
@@ -309,6 +301,60 @@ function switchTab(tabId) {
     $('#sftp-modal-title').textContent = '📁 文件传输 - ' + tab.username + '@' + tab.host;
     sftpListDir(sftpState.currentPath);
   }
+}
+
+// Reconnect using existing tab (does NOT create new tab)
+function reconnectTab(tab) {
+  // Clean up existing resources
+  sendWS({ type: 'disconnect', tabId: tab.id });
+  tab.connected = false;
+  if (tab.rfb) { try { tab.rfb.disconnect(); } catch(e) {} }
+  if (tab.guacClient) { try { tab.guacClient.disconnect(); } catch(e) {} }
+  if (tab.guacKeyboard) { unregisterGuacKeyboard(tab.guacKeyboard); tab.guacKeyboard = null; }
+  if (tab.vncKeyboard) { unregisterGuacKeyboard(tab.vncKeyboard); tab.vncKeyboard = null; }
+  tab.resizeObserver?.disconnect();
+  if (tab._displayRO) { tab._displayRO.disconnect(); tab._displayRO = null; }
+  if (tab.rdpStatus) { tab.rdpStatus.textContent = '重新连接中...'; tab.rdpStatus.style.display = ''; tab.rdpStatus.style.color = ''; }
+
+  // Reset graphical display for RDP/VNC
+  if (tab.protocol === 'rdp' || tab.protocol === 'vnc') {
+    var wrapper = tab.canvasWrapper;
+    if (wrapper) {
+      // Remove old guac display divs
+      var children = wrapper.querySelectorAll('div');
+      for (var i = 0; i < children.length; i++) {
+        if (!children[i].classList.contains('canvas-status')) children[i].remove();
+      }
+      if (tab.canvas) tab.canvas.style.display = 'none';
+    }
+  }
+
+  // Reset terminal for SSH/Telnet
+  if (tab.terminal) {
+    tab.terminal.reset();
+  }
+
+  showOverlay(tab);
+
+  var proto = tab.protocol;
+  setStatus('正在重新连接 ' + tab.host + '...', true);
+
+  setTimeout(function() {
+    try { tab.fitAddon?.fit(); } catch(e) {}
+    if (proto === 'telnet') {
+      tab._autoReconnect = true;
+      sendWS({ type: 'telnet-connect', tabId: tab.id, host: tab.host, port: tab.port, termCols: tab.terminal?.cols, termRows: tab.terminal?.rows });
+    } else if (proto === 'rdp') {
+      setupGuacRDP(tab);
+    } else if (proto === 'vnc') {
+      setupGuacRDP(tab);
+    } else {
+      tab._autoReconnect = true;
+      sendWS({ type: 'ssh-connect', tabId: tab.id, host: tab.host, port: tab.port, username: tab.username, password: tab.password, privateKey: tab.privateKey, termCols: tab.terminal?.cols, termRows: tab.terminal?.rows });
+    }
+  }, 150);
+
+  switchTab(tab.id);
 }
 
 function closeTab(tabId) {
@@ -804,6 +850,11 @@ function renderGroupSection(name, groupId, sessions, depth) {
     <span class="group-count">${sessions.length}</span>`;
 
   header.addEventListener('click', () => {
+    // In collapsed sidebar, clicking group icon expands sidebar
+    if ($('#sidebar').classList.contains('collapsed')) {
+      toggleSidebar();
+      return;
+    }
     const contents = section.querySelector('.group-sessions');
     const arrow = header.querySelector('.group-arrow');
     const collapsed = contents.classList.toggle('collapsed');
@@ -1002,11 +1053,7 @@ function showTabContextMenu(x, y, tab) {
   if (!tab.connected) {
     reconnectItem.addEventListener('click', function() {
       hideAllMenus();
-      // Trigger reconnection
-      connectToDevice({
-        host: tab.host, port: tab.port, username: tab.username,
-        password: tab.password, protocol: tab.protocol, name: tab.title,
-      });
+      reconnectTab(tab);
     });
   }
   menu.appendChild(reconnectItem);
@@ -1442,6 +1489,8 @@ async function apiFetch(url, options = {}) {
 }
 
 // ===== Init =====
+$('#btn-toggle-sidebar').addEventListener('click', toggleSidebar);
+
 if (!getToken()) { location.href = '/login.html'; } else {
   connectWebSocket();
   loadAll();

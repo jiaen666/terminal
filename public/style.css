@@ -877,21 +877,28 @@ html, body {
   padding: 2px 0;
 }
 #sidebar.collapsed .group-section { margin-left: 0 !important; }
-#sidebar.collapsed .group-header { display: none; }
-#sidebar.collapsed .group-sessions { display: flex !important; flex-direction: column; align-items: center; gap: 2px; }
-#sidebar.collapsed .session-item {
-  padding: 8px 4px !important;
+/* Collapsed: show group headers as icons, hide sessions */
+#sidebar.collapsed .group-header {
+  display: flex !important;
   justify-content: center !important;
+  align-items: center;
+  padding: 10px 4px !important;
   border-radius: 6px;
   width: 40px;
   height: 40px;
   box-sizing: border-box;
+  margin: 2px auto;
+  cursor: pointer;
+  background: none;
 }
-#sidebar.collapsed .session-info { display: none; }
-#sidebar.collapsed .session-icon { font-size: 20px; }
-#sidebar.collapsed .session-item:hover { background: var(--bg-hover); }
-/* Tooltip on collapsed icons */
-#sidebar.collapsed .session-item::after {
+#sidebar.collapsed .group-header .group-arrow { display: none; }
+#sidebar.collapsed .group-header .group-count { display: none; }
+#sidebar.collapsed .group-header .group-name { font-size: 0; }
+#sidebar.collapsed .group-header .group-name::before { content: '📁'; font-size: 20px; }
+#sidebar.collapsed .group-header:hover { background: var(--bg-hover); }
+#sidebar.collapsed .group-sessions { display: none !important; }
+/* Tooltip on collapsed group icons */
+#sidebar.collapsed .group-header::after {
   content: attr(data-tooltip);
   position: fixed;
   left: 58px;
@@ -907,7 +914,7 @@ html, body {
   transition: opacity 0.15s;
   z-index: 200;
 }
-#sidebar.collapsed .session-item:hover::after { opacity: 1; }
+#sidebar.collapsed .group-header:hover::after { opacity: 1; }
 
 #resize-handle.collapsed { width: 2px; }
 #btn-toggle-sidebar { 
