@@ -1102,6 +1102,114 @@ function renderCmdHistory(tab) {
   }
 }
 
+
+// ===== Screenshot =====
+function captureScreenshot(tab) {
+  var term = tab.terminal;
+  var isTerm = !!(term);
+
+  if (isTerm) {
+    // Read terminal buffer lines
+    var rows = term.rows || 24;
+    var lines = [];
+    for (var r = 0; r < rows; r++) {
+      try {
+        var line = term.buffer.active.getLine(r);
+        lines.push(line ? line.translateToString(true) : '');
+      } catch(e) {
+        lines.push('');
+      }
+    }
+    if (lines.length === 0) lines = [' '];
+    
+    var maxCols = 0;
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].length > maxCols) maxCols = lines[i].length;
+    }
+    maxCols = Math.max(maxCols, 1);
+    var fontSize = 14;
+    var charW = Math.ceil(fontSize * 0.6);
+    var charH = Math.ceil(fontSize * 1.3);
+    var pad = 10;
+    var w = pad * 2 + maxCols * charW;
+    var h = pad * 2 + rows * charH;
+
+    var outCanvas = document.createElement('canvas');
+    outCanvas.width = w;
+    outCanvas.height = h;
+    var ctx = outCanvas.getContext('2d');
+    ctx.fillStyle = '#0d0d0d';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#cdd6f4';
+    ctx.font = fontSize + 'px monospace';
+    ctx.textBaseline = 'top';
+
+    for (var r = 0; r < rows; r++) {
+      ctx.fillText(lines[r] || ' ', pad, pad + r * charH);
+    }
+    
+    outCanvas.toBlob(function(blob) {
+      downloadScreenshot(blob, tab);
+    }, 'image/png');
+    return;
+  }
+
+  // For RDP/VNC: capture only the main desktop canvas (skip cursor layers)
+  var rect = tab.tabContent.getBoundingClientRect();
+  var w = Math.round(rect.width) || 1024;
+  var h = Math.round(rect.height) || 768;
+
+  var outCanvas = document.createElement('canvas');
+  outCanvas.width = w;
+  outCanvas.height = h;
+  var ctx = outCanvas.getContext('2d');
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0, w, h);
+
+  // Pick the largest canvas as the main display
+  var canvases = Array.from(tab.tabContent.querySelectorAll('canvas'));
+  var mainCanvas = null;
+  var maxArea = 0;
+  canvases.forEach(function(c) {
+    var area = c.width * c.height;
+    if (area > maxArea && area > 100) {
+      maxArea = area;
+      mainCanvas = c;
+    }
+  });
+
+  if (mainCanvas) {
+    // Draw main canvas at actual size, centered
+    var cw = mainCanvas.width;
+    var ch = mainCanvas.height;
+    var scale = Math.min(w / cw, h / ch);
+    var dw = cw * scale;
+    var dh = ch * scale;
+    var dx = (w - dw) / 2;
+    var dy = (h - dh) / 2;
+    try { ctx.drawImage(mainCanvas, dx, dy, dw, dh); } catch(e) {}
+  } else {
+    alert('无法捕获画面');
+    return;
+  }
+
+  outCanvas.toBlob(function(blob) {
+    downloadScreenshot(blob, tab);
+  }, 'image/png');
+}
+
+function downloadScreenshot(blob, tab) {
+  var url = URL.createObjectURL(blob);
+  var link = document.createElement('a');
+  var ts = new Date().toISOString().slice(0,19).replace(/:/g,'-');
+  link.download = 'screenshot-' + (tab.host || tab.title) + '-' + ts + '.png';
+  link.href = url;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(function() { URL.revokeObjectURL(url); }, 2000);
+}
+
 // ===== Tab Context Menu =====
 function showTabContextMenu(x, y, tab) {
   hideAllMenus();
@@ -1125,6 +1233,18 @@ function showTabContextMenu(x, y, tab) {
     });
   }
   menu.appendChild(reconnectItem);
+
+  // Screenshot
+  if (tab.connected) {
+    var shotItem = document.createElement('div');
+    shotItem.className = 'tab-context-item';
+    shotItem.textContent = '📷 截图';
+    shotItem.addEventListener('click', function() {
+      hideAllMenus();
+      captureScreenshot(tab);
+    });
+    menu.appendChild(shotItem);
+  }
   
   // Close tab option
   var closeItem = document.createElement('div');
