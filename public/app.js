@@ -134,6 +134,12 @@ function createTab(title, host, protocol) {
   const spacer = $('#tab-bar-spacer');
   dom.tabBar.insertBefore(tabEl, spacer);
 
+  // Sidebar toggle
+  if (!$('#btn-toggle-sidebar')._init) {
+    $('#btn-toggle-sidebar')._init = true;
+    $('#btn-toggle-sidebar').addEventListener('click', toggleSidebar);
+  }
+
   let tab = {
     id: tabId, title: shortTitle, host, protocol,
     username: '', password: '', port: 3389,
@@ -198,10 +204,33 @@ function createTab(title, host, protocol) {
 
   tabEl.addEventListener('click', e => { if (!e.target.closest('.tab-close')) switchTab(tabId); });
   tabEl.querySelector('.tab-close').addEventListener('click', e => { e.stopPropagation(); closeTab(tabId); });
+  
+  // Right-click context menu for tabs
+  tabEl.addEventListener('contextmenu', function(e) {
+    e.preventDefault(); e.stopPropagation();
+    showTabContextMenu(e.clientX, e.clientY, tab);
+  });
   tabEl.addEventListener('mousedown', e => { if (e.button === 1) { e.preventDefault(); closeTab(tabId); } });
 
   switchTab(tabId);
   return tab;
+}
+
+function toggleSidebar() {
+  var sidebar = $('#sidebar');
+  var handle = $('#resize-handle');
+  var btn = $('#btn-toggle-sidebar');
+  var collapsed = sidebar.classList.toggle('collapsed');
+  handle.classList.toggle('collapsed', collapsed);
+  btn.classList.toggle('collapsed', collapsed);
+  btn.textContent = collapsed ? '▶' : '◀';
+  btn.title = collapsed ? '展开侧边栏' : '折叠侧边栏';
+  // Trigger resize on active tab's terminal/display
+  setTimeout(function() {
+    var tab = state.tabs.find(function(t) { return t.id === state.activeTabId; });
+    if (tab && tab.fitAddon) { try { tab.fitAddon.fit(); } catch(e) {} }
+    if (tab && tab.terminal) { try { tab.fitAddon.fit(); } catch(e) {} }
+  }, 300);
 }
 
 function switchTab(tabId) {
@@ -724,11 +753,24 @@ function renderGroupSection(name, groupId, sessions, depth) {
           <div class="session-host">${protoLabels[s.protocol] || s.protocol} | ${s.username || '(无)'}@${s.host}:${s.port}</div>
         </div>`;
 
-      item.addEventListener('dblclick', () => connectToDevice({
-        host: s.host, port: s.port, username: s.username,
-        password: s.password, privateKey: s.privateKey,
-        protocol: s.protocol, name: s.name,
-      }));
+      item.addEventListener('dblclick', () => {
+        // Check if this connection is already open in a tab
+        var existing = state.tabs.find(function(t) {
+          return t.host === s.host && t.port === s.port && t.protocol === s.protocol &&
+                 t.username === s.username;
+        });
+        if (existing) {
+          // Switch to existing tab
+          switchTab(existing.id);
+          return;
+        }
+        // Open new connection
+        connectToDevice({
+          host: s.host, port: s.port, username: s.username,
+          password: s.password, privateKey: s.privateKey,
+          protocol: s.protocol, name: s.name,
+        });
+      });
 
       item.addEventListener('click', () => {
         $$('.session-item').forEach(el => el.style.background = '');
@@ -817,7 +859,52 @@ function hideAllMenus() {
   dom.contextMenu.classList.add('hidden');
   dom.groupContextMenu.classList.add('hidden');
   dom.moveMenu.classList.add('hidden');
+  var tcm = $('#tab-context-menu');
+  if (tcm) tcm.classList.add('hidden');
   state.contextSessionId = null; state.contextGroupId = null;
+}
+
+// ===== Tab Context Menu =====
+function showTabContextMenu(x, y, tab) {
+  hideAllMenus();
+  var menu = $('#tab-context-menu');
+  if (!menu) {
+    menu = document.createElement('div');
+    menu.id = 'tab-context-menu';
+    menu.className = 'tab-context-menu hidden';
+    document.body.appendChild(menu);
+  }
+  menu.innerHTML = '';
+  
+  // Reconnect option (only if disconnected)
+  var reconnectItem = document.createElement('div');
+  reconnectItem.className = 'tab-context-item' + (tab.connected ? ' disabled' : '');
+  reconnectItem.textContent = '🔄 重新连接';
+  if (!tab.connected) {
+    reconnectItem.addEventListener('click', function() {
+      hideAllMenus();
+      // Trigger reconnection
+      connectToDevice({
+        host: tab.host, port: tab.port, username: tab.username,
+        password: tab.password, protocol: tab.protocol, name: tab.title,
+      });
+    });
+  }
+  menu.appendChild(reconnectItem);
+  
+  // Close tab option
+  var closeItem = document.createElement('div');
+  closeItem.className = 'tab-context-item';
+  closeItem.textContent = '✕ 关闭标签';
+  closeItem.addEventListener('click', function() {
+    hideAllMenus();
+    closeTab(tab.id);
+  });
+  menu.appendChild(closeItem);
+  
+  menu.classList.remove('hidden');
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
 }
 
 // ===== Modals =====

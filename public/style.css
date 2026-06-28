@@ -862,3 +862,45 @@ html, body {
 #group-modal .modal-content {
   width: 360px;
 }
+
+/* Sidebar collapsed state */
+#sidebar.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  overflow: hidden;
+  border-right: none;
+}
+#resize-handle.collapsed { display: none; }
+#btn-toggle-sidebar { margin-left: auto; }
+#btn-toggle-sidebar.collapsed {
+  position: fixed;
+  left: 4px;
+  top: 52px;
+  z-index: 100;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 0 6px 6px 0;
+  padding: 8px 4px;
+  font-size: 12px;
+}
+/* Tab context menu */
+.tab-context-menu {
+  position: fixed;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  z-index: 1000;
+  min-width: 120px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.tab-context-item {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.tab-context-item:hover { background: var(--bg-hover); }
+.tab-context-item.disabled { color: var(--text-muted); pointer-events: none; }
