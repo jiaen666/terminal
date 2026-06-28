@@ -1,0 +1,43 @@
+# Super Terminal - Production Docker Compose
+# 部署: docker compose -f docker-compose.prod.yml up -d
+# 更新: docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+
+services:
+  guacd:
+    image: registry.cn-hangzhou.aliyuncs.com/jiaendocker/super-terminal-guacd:latest
+    container_name: super-terminal-guacd
+    restart: unless-stopped
+    networks:
+      - super-terminal-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "4822"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  app:
+    image: registry.cn-hangzhou.aliyuncs.com/jiaendocker/super-terminal:latest
+    container_name: super-terminal-app
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - AUTH_PASSWORD=admin123         # 网页登录密码，请修改
+      - GUACD_HOST=guacd               # guacd 容器名
+      - BRIDGE_HOST=guacd              # RDP/VNC 桥接地址
+      - RDP_SECURITY=any               # RDP 安全模式: nla | tls | rdp | any
+      - RDP_TUNNEL_PORT_START=13500    # RDP 隧道起始端口
+    volumes:
+      - sessions-data:/app/data        # 持久化会话数据
+    networks:
+      - super-terminal-net
+    depends_on:
+      guacd:
+        condition: service_healthy
+
+networks:
+  super-terminal-net:
+    driver: bridge
+
+volumes:
+  sessions-data:
