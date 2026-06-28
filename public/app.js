@@ -1064,10 +1064,11 @@ function showCmdHistory(tab) {
     modal.id = 'cmd-history-modal';
     modal.className = 'modal hidden';
     modal.innerHTML = '<div class="modal-overlay"></div><div class="modal-content cmd-history-content">' +
-      '<div class="modal-header"><h2>📜 命令历史</h2><button class="modal-close" onclick="hideCmdHistory()">✕</button></div>' +
+      '<div class="modal-header"><h2>📜 命令历史</h2><button class="modal-close">✕</button></div>' +
       '<div class="modal-body"><div id="cmd-history-list"></div></div></div>';
     document.body.appendChild(modal);
     modal.querySelector('.modal-overlay').addEventListener('click', hideCmdHistory);
+    modal.querySelector('.modal-close').addEventListener('click', hideCmdHistory);
   }
   $('#cmd-history-modal').classList.remove('hidden');
   renderCmdHistory(tab);
@@ -1161,6 +1162,7 @@ function showConnModal(editId) {
       const s = state.sessions.find(x => x.id === editId);
       if (s) {
         dom.modalTitle.textContent = '编辑连接';
+        $('#btn-conn-submit').textContent = '保存';
         $('#conn-name').value = s.name || ''; $('#conn-protocol').value = s.protocol || 'ssh';
         $('#conn-host').value = s.host || ''; $('#conn-port').value = s.port || '';
         $('#conn-username').value = s.username || ''; $('#conn-password').value = s.password || '';
@@ -1177,6 +1179,7 @@ function showConnModal(editId) {
     return;
   } else {
     dom.modalTitle.textContent = '新建连接'; resetConnForm(); delete dom.connModal.dataset.editId;
+    $('#btn-conn-submit').textContent = '连接';
   }
   dom.connModal.classList.remove('hidden');
   setTimeout(() => $('#conn-host')?.focus(), 100);
@@ -1186,7 +1189,7 @@ function resetConnForm() {
   $('#conn-name').value = ''; $('#conn-protocol').value = 'ssh'; $('#conn-host').value = '';
   $('#conn-port').value = '22'; $('#conn-username').value = ''; $('#conn-password').value = '';
   $('#conn-privatekey').value = ''; $('#conn-description').value = ''; $('#conn-group').value = '';
-  $('#conn-save').checked = true; $('#auth-type').value = 'password';
+  $('#conn-save').checked = false; $('#btn-conn-submit').textContent = '连接'; $('#auth-type').value = 'password';
   $('#password-group').classList.remove('hidden'); $('#key-group').classList.add('hidden');
   updateProtocolUI();
 }
@@ -1404,10 +1407,18 @@ function submitConnForm() {
 
   const config = { name, host, port, username: username || '', password, privateKey, protocol: proto, group, description };
 
-  if (editId) { updateSession(editId, config); } else if (shouldSave) { saveSession(config); }
+  if (editId) {
+    updateSession(editId, config);
+  } else if (shouldSave) {
+    saveSession(config);
+  }
 
   hideConnModal();
-  connectToDevice(config);
+
+  // Connect only if checkbox is NOT checked (connect mode) and not editing
+  if (!editId && !shouldSave) {
+    connectToDevice(config);
+  }
 }
 
 function submitQuickForm() {
@@ -1449,6 +1460,16 @@ document.addEventListener('mousemove', (e) => { if (!isResizing) return; const w
 document.addEventListener('mouseup', () => { if (isResizing) { isResizing = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; } });
 
 // ===== Event Listeners =====
+// Checkbox toggle: save mode vs connect mode
+$('#conn-save').addEventListener('change', function() {
+  var editId = dom.connModal.dataset.editId;
+  if (editId) {
+    $('#btn-conn-submit').textContent = '保存';
+  } else {
+    $('#btn-conn-submit').textContent = this.checked ? '保存' : '连接';
+  }
+});
+
 $('#btn-new-conn').addEventListener('click', () => showConnModal());
 $('#welcome-new-conn')?.addEventListener('click', () => showConnModal());
 $('#welcome-quick-connect')?.addEventListener('click', () => showQuickModal());
