@@ -267,6 +267,8 @@ function closeTab(tabId) {
   tab.connected = false;
   if (tab.rfb) { try { tab.rfb.disconnect(); } catch(e) {} }
   if (tab.guacClient) { try { tab.guacClient.disconnect(); } catch(e) {} }
+  if (tab.guacKeyboard) { unregisterGuacKeyboard(tab.guacKeyboard); }
+  if (tab.vncKeyboard) { unregisterGuacKeyboard(tab.vncKeyboard); }
   tab.resizeObserver?.disconnect();
   tab.terminal?.dispose();
   tab.tabContent?.remove();
@@ -305,6 +307,23 @@ function updateStatusConn() {
 }
 
 function setStatus(text, ok) { dom.statusText.textContent = text; dom.statusText.style.color = ok ? 'var(--text-muted)' : 'var(--danger)'; }
+
+
+// ===== Guacamole Keyboard Management =====
+var _guacKeyboards = [];
+function registerGuacKeyboard(kb) { if (kb && _guacKeyboards.indexOf(kb) === -1) _guacKeyboards.push(kb); }
+function unregisterGuacKeyboard(kb) { var i = _guacKeyboards.indexOf(kb); if (i !== -1) _guacKeyboards.splice(i, 1); }
+function pauseAllGuacKeyboards() {
+  _guacKeyboards.forEach(function(kb) {
+    if (!kb._paused) { kb._savedOnkeydown = kb.onkeydown; kb._savedOnkeyup = kb.onkeyup; kb._paused = true; }
+    kb.onkeydown = null; kb.onkeyup = null;
+  });
+}
+function resumeAllGuacKeyboards() {
+  _guacKeyboards.forEach(function(kb) {
+    if (kb._paused) { kb.onkeydown = kb._savedOnkeydown; kb.onkeyup = kb._savedOnkeyup; kb._paused = false; }
+  });
+}
 
 // ===== RDP Bitmap Rendering =====
 function renderRDPBitmap(tab, msg) {
@@ -625,6 +644,7 @@ function setupGuacRDPInternal(tab, displayDiv, statusDiv) {
           document.activeElement?.tagName !== 'SELECT') cli.sendKeyEvent(0, k); 
     };
     tab.guacKeyboard = kb;
+    registerGuacKeyboard(kb);
     
     var ms = new Guacamole.Mouse(dsp.getElement());
     ms.onmousedown = ms.onmouseup = ms.onmousemove = function(st) { cli.sendMouseState(st); };
@@ -787,6 +807,15 @@ function renderGroupSection(name, groupId, sessions, depth) {
       item.addEventListener('click', () => {
         $$('.session-item').forEach(el => el.style.background = '');
         item.style.background = 'var(--bg-hover)';
+        // Single click in collapsed sidebar opens/switches session
+        if ($('#sidebar').classList.contains('collapsed')) {
+          var existing = state.tabs.find(function(t) {
+            return t.host === s.host && t.port === s.port && t.protocol === s.protocol &&
+                   t.username === s.username;
+          });
+          if (existing) { switchTab(existing.id); }
+          else { connectToDevice({ host: s.host, port: s.port, username: s.username, password: s.password, privateKey: s.privateKey, protocol: s.protocol, name: s.name }); }
+        }
       });
 
       item.addEventListener('contextmenu', (e) => {
@@ -921,6 +950,7 @@ function showTabContextMenu(x, y, tab) {
 
 // ===== Modals =====
 function showConnModal(editId) {
+  pauseAllGuacKeyboards();
   if (editId) {
     // Reload sessions to ensure we have latest data
     loadSessions().then(() => {
@@ -957,17 +987,21 @@ function resetConnForm() {
   updateProtocolUI();
 }
 
-function hideConnModal() { dom.connModal.classList.add('hidden'); }
+function hideConnModal() {
+  if (dom.quickModal.classList.contains('hidden') && dom.groupModal.classList.contains('hidden')) resumeAllGuacKeyboards(); dom.connModal.classList.add('hidden'); }
 
 function showQuickModal() {
+  pauseAllGuacKeyboards();
   $('#quick-host').value = ''; $('#quick-password').value = ''; $('#quick-protocol').value = 'ssh';
   dom.quickModal.classList.remove('hidden');
   setTimeout(() => $('#quick-host')?.focus(), 100);
 }
 
-function hideQuickModal() { dom.quickModal.classList.add('hidden'); }
+function hideQuickModal() {
+  if (dom.connModal.classList.contains('hidden') && dom.groupModal.classList.contains('hidden')) resumeAllGuacKeyboards(); dom.quickModal.classList.add('hidden'); }
 
 function showGroupModal(editId, parentId) {
+  pauseAllGuacKeyboards();
   if (editId) {
     const g = state.groups.find(x => x.id === editId);
     $('#group-name').value = g ? g.name : '';
@@ -983,7 +1017,8 @@ function showGroupModal(editId, parentId) {
   dom.groupModal.classList.remove('hidden');
   setTimeout(() => $('#group-name')?.focus(), 100);
 }
-function hideGroupModal() { dom.groupModal.classList.add('hidden'); }
+function hideGroupModal() {
+  if (dom.connModal.classList.contains('hidden') && dom.quickModal.classList.contains('hidden')) resumeAllGuacKeyboards(); dom.groupModal.classList.add('hidden'); }
 
 function updateProtocolUI() {
   const proto = $('#conn-protocol').value;
@@ -1085,6 +1120,7 @@ $('#btn-conn-cancel').addEventListener('click', hideConnModal);
 $('#btn-quick-submit').addEventListener('click', submitQuickForm);
 $('#btn-quick-cancel').addEventListener('click', hideQuickModal);
 $('#btn-group-submit').addEventListener('click', submitGroupForm);
+$('#group-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitGroupForm(); } });
 $('#btn-group-cancel').addEventListener('click', hideGroupModal);
 
 // Context menu actions
