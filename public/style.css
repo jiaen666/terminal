@@ -999,3 +999,41 @@ html, body {
   --border: #d0d0d0;
   --terminal-bg: #fafafa;
 }
+
+/* ===== Command History ===== */
+.cmd-history-content {
+  width: 520px;
+  max-height: 70vh;
+}
+#cmd-history-list {
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.history-empty {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 32px 0;
+}
+.history-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  transition: background 0.12s;
+}
+.history-item:hover {
+  background: var(--bg-hover);
+}
+.history-num {
+  color: var(--text-muted);
+  min-width: 36px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.history-cmd {
+  color: var(--text-primary);
+  word-break: break-all;
+}

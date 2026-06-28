@@ -179,6 +179,8 @@ function createTab(title, host, protocol) {
     terminal: null, canvas: null, rfb: null,
     fitAddon: null, resizeObserver: null,
     bitmapBuf: null,
+    cmdHistory: [],
+    _cmdBuf: '',
   };
 
   if (isGraphical) {
@@ -227,7 +229,27 @@ function createTab(title, host, protocol) {
     });
     ro.observe(termWrapper);
 
-    terminal.onData(data => sendWS({ type: 'input', tabId, data }));
+    terminal.onData(function(data) {
+      sendWS({ type: 'input', tabId, data });
+      // Capture command history for SSH/Telnet
+      for (var i = 0; i < data.length; i++) {
+        var ch = data[i];
+        if (ch === '') {
+          var cmd = tab._cmdBuf.trim();
+          if (cmd && (tab.cmdHistory.length === 0 || tab.cmdHistory[tab.cmdHistory.length - 1] !== cmd)) {
+            tab.cmdHistory.push(cmd);
+            if (tab.cmdHistory.length > 500) tab.cmdHistory.shift();
+          }
+          tab._cmdBuf = '';
+        } else if (ch === '') {
+          tab._cmdBuf = tab._cmdBuf.slice(0, -1);
+        } else if (ch >= ' ') {
+          tab._cmdBuf += ch;
+        } else if (ch === '\x03') {
+          tab._cmdBuf = '';
+        }
+      }
+    });
 
     tab.terminal = terminal; tab.fitAddon = fitAddon; tab.resizeObserver = ro;
   }
@@ -1034,6 +1056,51 @@ function hideAllMenus() {
   state.contextSessionId = null; state.contextGroupId = null;
 }
 
+// ===== Command History =====
+function showCmdHistory(tab) {
+  var modal = $('#cmd-history-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'cmd-history-modal';
+    modal.className = 'modal hidden';
+    modal.innerHTML = '<div class="modal-overlay"></div><div class="modal-content cmd-history-content">' +
+      '<div class="modal-header"><h2>📜 命令历史</h2><button class="modal-close" onclick="hideCmdHistory()">✕</button></div>' +
+      '<div class="modal-body"><div id="cmd-history-list"></div></div></div>';
+    document.body.appendChild(modal);
+    modal.querySelector('.modal-overlay').addEventListener('click', hideCmdHistory);
+  }
+  $('#cmd-history-modal').classList.remove('hidden');
+  renderCmdHistory(tab);
+}
+
+function hideCmdHistory() {
+  var m = $('#cmd-history-modal');
+  if (m) m.classList.add('hidden');
+}
+
+function renderCmdHistory(tab) {
+  var list = $('#cmd-history-list');
+  if (!list) return;
+  list.innerHTML = '';
+  var history = tab.cmdHistory || [];
+  if (history.length === 0) {
+    list.innerHTML = '<div class="history-empty">暂无历史命令</div>';
+    return;
+  }
+  for (var i = history.length - 1; i >= 0; i--) {
+    (function(cmd, idx) {
+      var row = document.createElement('div');
+      row.className = 'history-item';
+      row.innerHTML = '<span class="history-num">' + (idx + 1) + '</span><span class="history-cmd">' + escapeHtml(cmd) + '</span>';
+      row.addEventListener('click', function() {
+        hideCmdHistory();
+        sendWS({ type: 'input', tabId: tab.id, data: cmd + '' });
+      });
+      list.appendChild(row);
+    })(history[i], i);
+  }
+}
+
 // ===== Tab Context Menu =====
 function showTabContextMenu(x, y, tab) {
   hideAllMenus();
@@ -1067,6 +1134,18 @@ function showTabContextMenu(x, y, tab) {
     closeTab(tab.id);
   });
   menu.appendChild(closeItem);
+
+  // Command History (SSH/Telnet only)
+  if ((tab.protocol === 'ssh' || tab.protocol === 'telnet') && tab.cmdHistory && tab.cmdHistory.length > 0) {
+    var histItem = document.createElement('div');
+    histItem.className = 'tab-context-item';
+    histItem.textContent = '📜 命令历史 (' + tab.cmdHistory.length + ')';
+    histItem.addEventListener('click', function() {
+      hideAllMenus();
+      showCmdHistory(tab);
+    });
+    menu.appendChild(histItem);
+  }
   
   menu.classList.remove('hidden');
   menu.style.left = x + 'px';
