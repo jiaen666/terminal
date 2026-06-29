@@ -51,11 +51,12 @@ RUN cd /usr/local/lib && \
     ldd /usr/local/lib/libguac-client-vnc.so.0.0.0 2>&1 | grep "not found" || echo "VNC deps OK"
 
 COPY rdp-bridge.sh /usr/local/bin/rdp-bridge.sh
+COPY tcp-proxy.py /usr/local/bin/tcp-proxy.py
 COPY vnc-bridge.sh /usr/local/bin/vnc-bridge.sh
 COPY bridge-api.py /usr/local/bin/bridge-api.py
 COPY patch-rdp.sh /usr/local/bin/patch-rdp.sh
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /usr/local/bin/rdp-bridge.sh /usr/local/bin/vnc-bridge.sh \
+RUN chmod +x /usr/local/bin/rdp-bridge.sh /usr/local/bin/vnc-bridge.sh /usr/local/bin/tcp-proxy.py \
     /usr/local/bin/bridge-api.py /usr/local/bin/patch-rdp.sh /entrypoint.sh
 
 EXPOSE 4822
