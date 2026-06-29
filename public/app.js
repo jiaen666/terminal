@@ -691,21 +691,38 @@ function setupGuacRDPInternal(tab, displayDiv, statusDiv) {
     tab.guacClient = cli;
     
     var dsp = cli.getDisplay();
-    displayDiv.appendChild(dsp.getElement());
     
-    // Force the Guacamole display to fill its container
+    // Wrap in a centering container (flexbox avoids transform conflict with dsp.scale)
+    var dspWrapper = document.createElement('div');
+    dspWrapper.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;overflow:hidden;';
+    dspWrapper.appendChild(dsp.getElement());
+    displayDiv.appendChild(dspWrapper);
+    
     var dspEl = dsp.getElement();
-    dspEl.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
+    dspEl.style.cssText = 'display:block;transform-origin:center center;';
     
-    // Ensure the display scales correctly after DOM layout
-    setTimeout(function() {
-      var w = displayDiv.clientWidth || 1280;
-      var h = displayDiv.clientHeight || 720;
-      if (w > 0 && h > 0) {
-        dsp.scale(Math.min(w / (tab._rdpWidth || 1280), h / (tab._rdpHeight || 720)));
-        cli.sendSize(w, h);
+    // Scale display to fit container once remote size is known
+    function rescaleDisplay() {
+      var cw = displayDiv.clientWidth;
+      var ch = displayDiv.clientHeight;
+      var dw = dsp.getWidth() || tab._rdpWidth || 1280;
+      var dh = dsp.getHeight() || tab._rdpHeight || 720;
+      if (cw > 0 && ch > 0 && dw > 0 && dh > 0) {
+        var s = Math.min(cw / dw, ch / dh);
+        dsp.scale(s);
+        dspEl.style.width = (dw * s) + 'px';
+        dspEl.style.height = (dh * s) + 'px';
       }
-    }, 200);
+    }
+    tab._rescaleDisplay = rescaleDisplay;
+    
+    // Rescale when remote display size changes (initial connect)
+    dsp.onresize = function(w, h) {
+      tab._rdpWidth = w;
+      tab._rdpHeight = h;
+      rescaleDisplay();
+      if (tab.connected) cli.sendSize(w, h);
+    };
     
     cli.onstatechange = function(s) {
       if (s === 3) {
@@ -740,6 +757,7 @@ function setupGuacRDPInternal(tab, displayDiv, statusDiv) {
           cli.sendSize(w, h);
         }
       }
+      if (tab._rescaleDisplay) tab._rescaleDisplay();
     });
     ro.observe(displayDiv);
     tab._displayRO = ro;
