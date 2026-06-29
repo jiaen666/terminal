@@ -21,7 +21,7 @@ int X509_verify_cert(X509_STORE_CTX*ctx)
 {static x509v_t f;if(!f)f=(x509v_t)dlsym(RTLD_NEXT,"X509_verify_cert");
  int ret=f(ctx);
  if(ret<=0){
-  ctx->error=X509_V_OK;
+  X509_STORE_CTX_set_error(ctx, X509_V_OK);
   ret=1;
  }
  return ret;}

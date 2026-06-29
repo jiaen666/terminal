@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssh2-1t64 libcairo2 libjpeg-turbo8 \
     libpng16-16t64 libwebp7 libpango-1.0-0 libpulse0 \
     libvncserver1 libgcrypt20 netcat-openbsd \
-    openssl ca-certificates freerdp2-x11 xvfb x11vnc \
+    openssl ca-certificates freerdp2-x11 xvfb x11vnc xauth x11-utils \
     tigervnc-viewer tigervnc-standalone-server \
     gcc libc6-dev libssl-dev python3 binutils && \
     rm -rf /var/lib/apt/lists/*
