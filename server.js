@@ -348,11 +348,12 @@ function connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi)
     width: width || 1280,
     height: height || 720,
     dpi: dpi || 96,
-    'color-depth': '24',
+    'color-depth': '16',
     'swap-red-blue': 'false',
     'read-only': 'false',
     'cursor': 'local',
-    'encodings': 'zrle ultra copyrect hextile zlib corre rre raw',
+    'autoretry': 'true',
+    'encodings': 'hextile zlib copyrect rre raw',
       };
   vncParams.image = ['image/png', 'image/jpeg'];
   vncParams.video = null;
