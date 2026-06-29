@@ -1,16 +1,21 @@
 #!/bin/bash
 set -e
 
+# If a custom command is given, run it directly (e.g., bridge-api only)
+if [ $# -gt 0 ]; then
+  echo "Starting custom command: $@"
+  exec "$@"
+fi
+
+# Default: start bridge API + guacd
 echo "Starting bridge API on port 5998..."
 python3 /usr/local/bin/bridge-api.py &
 BRIDGE_PID=$!
 sleep 1
 
-# === Apply RDP TLS bypass binary patch ===
 echo "Applying RDP cert bypass patch..."
 /usr/local/bin/patch-rdp.sh
 
-# === Import RDP server certificates into trust stores ===
 echo "Importing RDP server certificates..."
 for target in ${RDP_IMPORT_CERTS:-172.30.64.6:3389}; do
   host=$(echo "$target" | cut -d: -f1)

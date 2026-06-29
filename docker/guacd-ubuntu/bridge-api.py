@@ -29,7 +29,7 @@ def start_bridge(bridge_type, host, port, password, username=None):
     else:
         cmd = ['/usr/local/bin/rdp-bridge.sh', host, str(port), username or 'administrator', password or '', str(local_port)]
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     BRIDGES[str(local_port)] = {'proc': proc, 'type': bridge_type, 'host': host}
 
     with open('/tmp/%s-bridge-%s.pid' % (bridge_type, local_port), 'w') as f:
