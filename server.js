@@ -364,25 +364,19 @@ function connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi)
     { host: guacdHost, port: 4822 },
     'vnc',
     vncParams,
-    new Logger('ERRORS')
+    new Logger('VERBOSE')
   );
 
   gc.on('open', () => console.log('Guac VNC opened:', host));
   
   gc.on('data', (instruction) => {
-    // Filter out cert-bypass/VNC errors
-    if (instruction.indexOf('5.error,0.,1.0;') >= 0 ||
-        instruction.indexOf('5.error,1.,1.0;') >= 0) {
-      console.log('Suppressed VNC error, connection continues');
-      return;
-    }
     if (ws.readyState === 1) ws.send(instruction);
   });
 
   gc.on('error', (err) => {
-    console.error('Guac VNC error:', err.message);
+    console.error('Guac VNC error:', err.message, err.stack);
     if (ws.readyState === 1) {
-      ws.send(GuacamoleParser.toInstruction(['error', err.message, '']));
+      ws.send(GuacamoleParser.toInstruction(['error', 'VNC: ' + (err.message || 'unknown error'), '515']));
       ws.close();
     }
   });

@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libvncserver1 libgcrypt20 netcat-openbsd \
     openssl ca-certificates freerdp2-x11 xvfb x11vnc xauth x11-utils \
     tigervnc-viewer tigervnc-standalone-server \
-    libgl1-mesa-dri libgl1-mesa-glx mesa-utils \
+    libgl1-mesa-dri mesa-utils \
     gcc libc6-dev libssl-dev python3 binutils && \
     rm -rf /var/lib/apt/lists/*
 
