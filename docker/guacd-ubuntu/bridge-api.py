@@ -1,10 +1,60 @@
 #!/usr/bin/env python3
-"""Bridge API: VNC (TigerVNC) and RDP (xfreerdp) bridges."""
-import json, sys, subprocess, os, signal, time, socket
+"""Bridge API: VNC (TCP proxy) and RDP (xfreerdp) bridges."""
+import json, sys, subprocess, os, signal, time, socket, threading, select
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 BRIDGES = {}
 NEXT_PORT = 6000
+
+def tcp_proxy(local_port, remote_host, remote_port):
+    """Simple TCP proxy: forward between local port and remote VNC server."""
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(('0.0.0.0', local_port))
+    server.listen(5)
+    server.settimeout(5)
+    
+    while True:
+        try:
+            client, addr = server.accept()
+        except socket.timeout:
+            continue
+        except:
+            break
+        
+        try:
+            remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            remote.settimeout(10)
+            remote.connect((remote_host, remote_port))
+            remote.settimeout(None)
+            client.settimeout(None)
+        except Exception as e:
+            sys.stderr.write('[vnc-proxy] Failed to connect to %s:%s: %s
+' % (remote_host, remote_port, e))
+            sys.stderr.flush()
+            try: client.close()
+            except: pass
+            continue
+        
+        # Bidirectional forwarding
+        def forward(src, dst, name):
+            try:
+                while True:
+                    data = src.recv(8192)
+                    if not data:
+                        break
+                    dst.sendall(data)
+            except:
+                pass
+            finally:
+                try: dst.close()
+                except: pass
+        
+        t1 = threading.Thread(target=forward, args=(client, remote, 'c2r'), daemon=True)
+        t2 = threading.Thread(target=forward, args=(remote, client, 'r2c'), daemon=True)
+        t1.start()
+        t2.start()
+
 
 def start_bridge(bridge_type, host, port, password, username=None):
     global NEXT_PORT
@@ -25,14 +75,24 @@ def start_bridge(bridge_type, host, port, password, username=None):
         except: pass
     
     if bridge_type == 'vnc':
-        cmd = ['/usr/local/bin/vnc-bridge.sh', host, str(port), password or '', str(local_port)]
+        # Use simple TCP proxy for VNC (much more reliable than TigerVNC->Xvfb->x11vnc)
+        proxy_thread = threading.Thread(
+            target=tcp_proxy,
+            args=(local_port, host, port),
+            daemon=True
+        )
+        proxy_thread.start()
+        # Store the thread reference
+        pid_file = f'/tmp/vnc-bridge-{local_port}.pid'
+        with open(pid_file, 'w') as f:
+            f.write(str(os.getpid()))
+        BRIDGES[str(local_port)] = {'proc': None, 'type': bridge_type, 'host': host, 'thread': proxy_thread}
     else:  # rdp
         cmd = ['/usr/local/bin/rdp-bridge.sh', host, str(port), username or 'administrator', password or '', str(local_port)]
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        BRIDGES[str(local_port)] = {'proc': proc, 'type': bridge_type, 'host': host}
     
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    BRIDGES[str(local_port)] = {'proc': proc, 'type': bridge_type, 'host': host}
-    
-    # Wait for x11vnc to be ready
+    # Wait for port to be ready
     for i in range(45):
         time.sleep(1)
         try:
@@ -45,7 +105,9 @@ def start_bridge(bridge_type, host, port, password, username=None):
             pass
     
     # Timeout
-    try: proc.kill()
+    try:
+        if BRIDGES[str(local_port)].get('proc'):
+            BRIDGES[str(local_port)]['proc'].kill()
     except: pass
     BRIDGES.pop(str(local_port), None)
     return None
@@ -66,10 +128,12 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if not host:
             self.send_error(400, 'host required'); return
         
-        sys.stderr.write('[bridge] Starting %s bridge: %s:%s (user=%s)\n' % (bridge_type, host, port, username or ''))
+        sys.stderr.write('[bridge] Starting %s bridge: %s:%s (user=%s)
+' % (bridge_type, host, port, username or ''))
         sys.stderr.flush()
         local_port = start_bridge(bridge_type, host, port, password, username)
-        sys.stderr.write('[bridge] %s bridge result: port=%s\n' % (bridge_type, local_port))
+        sys.stderr.write('[bridge] %s bridge result: port=%s
+' % (bridge_type, local_port))
         sys.stderr.flush()
         if local_port:
             result = {'port': local_port, 'host': '127.0.0.1'}
@@ -87,7 +151,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({'status': 'ok', 'bridges': len(BRIDGES)}).encode())
     
     def log_message(self, fmt, *args):
-        sys.stderr.write('[bridge] %s - - [%s] %s\n' % (self.client_address[0], self.log_date_time_string(), fmt % args))
+        sys.stderr.write('[bridge] %s - - [%s] %s
+' % (self.client_address[0], self.log_date_time_string(), fmt % args))
         sys.stderr.flush()
 
 if __name__ == '__main__':
