@@ -251,46 +251,8 @@ function handleGuacUpgrade(request, socket, head) {
     
     if (protocol === 'vnc') {
       console.log('VNC connecting to ' + host + ':' + port);
-      
-      const tryDirect = () => {
-        connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi);
-      };
-      
-      // Try bridge API first for broader VNC compatibility
-      const http = require('http');
-      const postData = JSON.stringify({ type: 'vnc', host, port, password: password || '' });
-      const req = http.request({
-        hostname: bridgeHost, port: 5998, path: '/',
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
-        timeout: 20000
-      }, (res) => {
-        let body = '';
-        res.on('data', (chunk) => body += chunk);
-        res.on('end', () => {
-          try {
-            const data = JSON.parse(body);
-            if (data.port) {
-              console.log('VNC bridge OK: localhost:' + data.port);
-              connectGuacVNC(ws, guacdHost, '127.0.0.1', data.port, '', width, height, dpi);
-              return;
-            }
-          } catch(e) {}
-          console.log('VNC bridge returned no port, trying direct');
-          tryDirect();
-        });
-      });
-      req.on('error', () => {
-        console.log('VNC bridge API unavailable, trying direct');
-        tryDirect();
-      });
-      req.on('timeout', () => { 
-        req.destroy();
-        console.log('VNC bridge timeout, trying direct');
-        tryDirect(); 
-      });
-      req.write(postData);
-      req.end();
+      // Use guacd native VNC client directly (no bridge needed)
+      connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi);
       return;
     } else {
       // RDP params

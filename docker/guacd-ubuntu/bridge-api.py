@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Bridge API: VNC (TigerVNC) and RDP (xfreerdp) bridges."""
-import json, subprocess, os, signal, time, socket
+import json, sys, subprocess, os, signal, time, socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 BRIDGES = {}
@@ -66,7 +66,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
         if not host:
             self.send_error(400, 'host required'); return
         
+        sys.stderr.write('[bridge] Starting %s bridge: %s:%s (user=%s)\n' % (bridge_type, host, port, username or ''))
+        sys.stderr.flush()
         local_port = start_bridge(bridge_type, host, port, password, username)
+        sys.stderr.write('[bridge] %s bridge result: port=%s\n' % (bridge_type, local_port))
+        sys.stderr.flush()
         if local_port:
             result = {'port': local_port, 'host': '127.0.0.1'}
             self.send_response(200)
@@ -82,7 +86,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps({'status': 'ok', 'bridges': len(BRIDGES)}).encode())
     
-    def log_message(self, *args): pass
+    def log_message(self, fmt, *args):
+        sys.stderr.write('[bridge] %s - - [%s] %s\n' % (self.client_address[0], self.log_date_time_string(), fmt % args))
+        sys.stderr.flush()
 
 if __name__ == '__main__':
     server = HTTPServer(('0.0.0.0', 5998), BridgeHandler)
