@@ -250,60 +250,47 @@ function handleGuacUpgrade(request, socket, head) {
     };
     
     if (protocol === 'vnc') {
-      // Try direct guacd VNC first, bridge as fallback
       console.log('VNC connecting to ' + host + ':' + port);
       
-      // Track if we've already connected
-      let connected = false;
-      
-      const tryBridge = () => {
-        if (connected) return;
-        console.log('VNC: trying bridge fallback for ' + host + ':' + port);
-        const http = require('http');
-        const postData = JSON.stringify({ type: 'vnc', host, port, password: password || '' });
-        const req = http.request({
-          hostname: bridgeHost, port: 5998, path: '/',
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
-          timeout: 20000
-        }, (res) => {
-          let body = '';
-          res.on('data', (chunk) => body += chunk);
-          res.on('end', () => {
-            if (connected) return;
-            try {
-              const data = JSON.parse(body);
-              if (data.port) {
-                connected = true;
-                console.log('VNC bridge OK: localhost:' + data.port);
-                connectGuacVNC(ws, guacdHost, '127.0.0.1', data.port, '', width, height, dpi);
-                return;
-              }
-            } catch(e) { console.log('VNC bridge parse error:', e.message); }
-            console.log('VNC: both direct and bridge failed for ' + host);
-          });
-        });
-        req.on('error', (e) => { if (!connected) console.log('VNC bridge error:', e.message); });
-        req.on('timeout', () => { req.destroy(); if (!connected) console.log('VNC bridge timeout'); });
-        req.write(postData);
-        req.end();
+      const tryDirect = () => {
+        connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi);
       };
       
-      // Try direct first, with 5-second fallback to bridge
-      var directTimer = setTimeout(function() {
-        if (!connected) tryBridge();
-      }, 5000);
-      
-      connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi, function() {
-        connected = true;
-        clearTimeout(directTimer);
-      }, function() {
-        // Direct failed, try bridge
-        if (!connected) {
-          console.log('VNC direct failed, trying bridge...');
-          tryBridge();
-        }
+      // Try bridge API first for broader VNC compatibility
+      const http = require('http');
+      const postData = JSON.stringify({ type: 'vnc', host, port, password: password || '' });
+      const req = http.request({
+        hostname: bridgeHost, port: 5998, path: '/',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
+        timeout: 20000
+      }, (res) => {
+        let body = '';
+        res.on('data', (chunk) => body += chunk);
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            if (data.port) {
+              console.log('VNC bridge OK: localhost:' + data.port);
+              connectGuacVNC(ws, guacdHost, '127.0.0.1', data.port, '', width, height, dpi);
+              return;
+            }
+          } catch(e) {}
+          console.log('VNC bridge returned no port, trying direct');
+          tryDirect();
+        });
       });
+      req.on('error', () => {
+        console.log('VNC bridge API unavailable, trying direct');
+        tryDirect();
+      });
+      req.on('timeout', () => { 
+        req.destroy();
+        console.log('VNC bridge timeout, trying direct');
+        tryDirect(); 
+      });
+      req.write(postData);
+      req.end();
       return;
     } else {
       // RDP params
@@ -391,7 +378,7 @@ function handleGuacUpgrade(request, socket, head) {
 }
 
 // ===== Helper: Connect VNC via guacd =====
-function connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi, onOpen, onError) {
+function connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi) {
   const vncParams = {
     hostname: host,
     port: String(port),
@@ -399,11 +386,11 @@ function connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi,
     width: width || 1280,
     height: height || 720,
     dpi: dpi || 96,
-    timezone: 'Asia/Shanghai',
-    'color-depth': '16',
+    'color-depth': '24',
     'swap-red-blue': 'false',
     'read-only': 'false',
-    'force-lossless': 'false',
+    'cursor': 'local',
+    'encodings': 'zrle ultra copyrect hextile zlib corre rre raw',
       };
   vncParams.image = ['image/png', 'image/jpeg'];
   vncParams.video = null;
@@ -418,7 +405,7 @@ function connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi,
     new Logger('ERRORS')
   );
 
-  gc.on('open', () => { console.log('Guac VNC opened:', host); if (onOpen) onOpen(); });
+  gc.on('open', () => console.log('Guac VNC opened:', host));
   
   gc.on('data', (instruction) => {
     // Filter out cert-bypass/VNC errors
@@ -432,7 +419,6 @@ function connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi,
 
   gc.on('error', (err) => {
     console.error('Guac VNC error:', err.message);
-    if (onError) onError(err);
     if (ws.readyState === 1) {
       ws.send(GuacamoleParser.toInstruction(['error', err.message, '']));
       ws.close();

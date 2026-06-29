@@ -45,7 +45,9 @@ RUN cd /usr/local/lib && \
     ln -sf libguac.so.24.0.0 libguac.so.24 && ln -sf libguac.so.24 libguac.so && \
     ldconfig && \
     gcc -shared -fPIC -o /usr/local/lib/sslbypass.so /tmp/sslbypass.c -ldl -lssl -lcrypto && \
-    rm /tmp/sslbypass.c
+    rm /tmp/sslbypass.c && \
+    echo "=== Checking VNC client ===" && \
+    ldd /usr/local/lib/libguac-client-vnc.so.0.0.0 2>&1 | grep "not found" || echo "VNC deps OK"
 
 COPY rdp-bridge.sh /usr/local/bin/rdp-bridge.sh
 COPY vnc-bridge.sh /usr/local/bin/vnc-bridge.sh

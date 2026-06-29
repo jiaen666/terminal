@@ -33,7 +33,7 @@ def start_bridge(bridge_type, host, port, password, username=None):
     BRIDGES[str(local_port)] = {'proc': proc, 'type': bridge_type, 'host': host}
     
     # Wait for x11vnc to be ready
-    for i in range(30):
+    for i in range(45):
         time.sleep(1)
         try:
             s = socket.socket()
