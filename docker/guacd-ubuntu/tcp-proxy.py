@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Simple TCP proxy with verbose logging."""
-import socket, sys, threading, os, time
+"""TCP proxy with first-packet hex dump for debugging."""
+import socket, sys, threading
 
 if len(sys.argv) < 4:
     print('Usage: tcp-proxy.py <local_port> <remote_host> <remote_port>', file=sys.stderr)
@@ -16,52 +16,45 @@ server.bind(('0.0.0.0', local_port))
 server.listen(10)
 print('[tcp-proxy:%s] Listening -> %s:%s' % (local_port, remote_host, remote_port), flush=True)
 
-conn_id = 0
+cid = 0
 
 while True:
     try:
         client, addr = server.accept()
-    except Exception as e:
-        print('[tcp-proxy:%s] Accept error: %s' % (local_port, e), file=sys.stderr, flush=True)
+    except:
         break
-    
-    conn_id += 1
-    cid = conn_id
-    print('[tcp-proxy:%s] #%d Client connected from %s:%s' % (local_port, cid, addr[0], addr[1]), flush=True)
-    
+    cid += 1; c = cid
+    print('[tcp-proxy:%s] #%d ACCEPT %s:%s' % (local_port, c, addr[0], addr[1]), flush=True)
     try:
         remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         remote.settimeout(10)
         remote.connect((remote_host, remote_port))
         remote.settimeout(None)
-        print('[tcp-proxy:%s] #%d Remote %s:%s connected' % (local_port, cid, remote_host, remote_port), flush=True)
     except Exception as e:
-        print('[tcp-proxy:%s] #%d Remote connect FAILED: %s' % (local_port, cid, e), file=sys.stderr, flush=True)
+        print('[tcp-proxy:%s] #%d REMOTE FAIL: %s' % (local_port, c, e), file=sys.stderr, flush=True)
         try: client.close()
         except: pass
         continue
-    
-    total_c2r = [0]
-    total_r2c = [0]
-    done = [False, False]
-    
-    def forward(src, dst, tag, count, idx):
+
+    first_r2c = [True]
+    first_c2r = [True]
+
+    def forward(src, dst, tag, first_flag, other_first):
         try:
             while True:
                 data = src.recv(16384)
-                if not data:
-                    break
+                if not data: break
+                if first_flag[0]:
+                    first_flag[0] = False
+                    hexdump = ' '.join('%02x' % b for b in data[:80])
+                    ascii_repr = ''.join(chr(b) if 32 <= b < 127 else '.' for b in data[:80])
+                    print('[tcp-proxy:%s] #%d %s FIRST %d bytes: %s |%s|' % (local_port, c, tag, len(data), hexdump, ascii_repr), flush=True)
                 dst.sendall(data)
-                count[0] += len(data)
         except Exception as e:
-            if not done[idx]:
-                print('[tcp-proxy:%s] #%d %s error: %s' % (local_port, cid, tag, e), file=sys.stderr, flush=True)
+            print('[tcp-proxy:%s] #%d %s ERR: %s' % (local_port, c, tag, e), file=sys.stderr, flush=True)
         finally:
-            done[idx] = True
             try: dst.close()
             except: pass
-            if done[0] and done[1]:
-                print('[tcp-proxy:%s] #%d Closed (c2r=%d r2c=%d)' % (local_port, cid, total_c2r[0], total_r2c[0]), flush=True)
-    
-    threading.Thread(target=forward, args=(client, remote, 'c2r', total_c2r, 0), daemon=True).start()
-    threading.Thread(target=forward, args=(remote, client, 'r2c', total_r2c, 1), daemon=True).start()
+
+    threading.Thread(target=forward, args=(client, remote, 'C->S', first_c2r, first_r2c), daemon=True).start()
+    threading.Thread(target=forward, args=(remote, client, 'S->C', first_r2c, first_c2r), daemon=True).start()
