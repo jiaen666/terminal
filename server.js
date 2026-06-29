@@ -257,11 +257,12 @@ function handleGuacUpgrade(request, socket, head) {
         connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi);
       };
       
-      // Try bridge TCP proxy first (more reliable for cross-network VNC)
+      // Use guacd container's bridge API (proxy runs in same container as guacd)
+      // This avoids cross-container network issues
       const http = require('http');
       const postData = JSON.stringify({ type: 'vnc', host, port, password: password || '' });
       const req = http.request({
-        hostname: bridgeHost, port: 5998, path: '/',
+        hostname: guacdHost, port: 5998, path: '/',
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(postData) },
         timeout: 15000
@@ -272,23 +273,23 @@ function handleGuacUpgrade(request, socket, head) {
           try {
             const data = JSON.parse(body);
             if (data.port) {
-              console.log('VNC bridge proxy OK: ' + bridgeHost + ':' + data.port);
-              // Connect guacd to the bridge proxy (which forwards to real VNC server)
-              connectGuacVNC(ws, guacdHost, bridgeHost, data.port, '', width, height, dpi);
+              console.log('VNC proxy on guacd:' + data.port);
+              // Connect guacd to 127.0.0.1 (same container as proxy)
+              connectGuacVNC(ws, guacdHost, '127.0.0.1', data.port, '', width, height, dpi);
               return;
             }
           } catch(e) {}
-          console.log('VNC bridge proxy failed, trying direct');
+          console.log('VNC proxy failed, trying direct');
           tryDirect();
         });
       });
       req.on('error', (e) => {
-        console.log('VNC bridge API unavailable (' + e.message + '), trying direct');
+        console.log('VNC proxy unavailable (' + e.message + '), trying direct');
         tryDirect();
       });
       req.on('timeout', () => { 
         req.destroy();
-        console.log('VNC bridge timeout, trying direct');
+        console.log('VNC proxy timeout, trying direct');
         tryDirect(); 
       });
       req.write(postData);
