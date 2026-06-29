@@ -681,13 +681,14 @@ function setupGuacRDPInternal(tab, displayDiv, statusDiv) {
     '&username=' + encodeURIComponent(tab.username || '') +
     '&password=' + encodeURIComponent(tab.password || '') +
     '&security=nla&ignore-cert=true' +
-    '&width=' + (displayDiv.clientWidth || wrapper.clientWidth || 1280) + '&height=' + (displayDiv.clientHeight || wrapper.clientHeight || 720);
+    '&width=' + (displayDiv.clientWidth || (tab.canvasWrapper && tab.canvasWrapper.clientWidth) || 1280) + '&height=' + (displayDiv.clientHeight || (tab.canvasWrapper && tab.canvasWrapper.clientHeight) || 720);
   
   try {
     var tun = new Guacamole.WebSocketTunnel(wsUrl);
     var cli = new Guacamole.Client(tun);
-    tab._rdpWidth = displayDiv.clientWidth || wrapper.clientWidth || 1280;
-    tab._rdpHeight = displayDiv.clientHeight || wrapper.clientHeight || 720;
+    var cw = tab.canvasWrapper;
+    tab._rdpWidth = displayDiv.clientWidth || (cw && cw.clientWidth) || 1280;
+    tab._rdpHeight = displayDiv.clientHeight || (cw && cw.clientHeight) || 720;
     tab.guacClient = cli;
     
     var dsp = cli.getDisplay();
@@ -732,6 +733,9 @@ function setupGuacRDPInternal(tab, displayDiv, statusDiv) {
         var protoLabel2 = (tab.protocol || 'rdp').toUpperCase();
         setStatus(protoLabel2 + ' 已连接', true);
         if (tab.rdpStatus) tab.rdpStatus.style.display = 'none';
+        // Rescale after remote display initializes
+        setTimeout(function() { if (tab._rescaleDisplay) tab._rescaleDisplay(); }, 100);
+        setTimeout(function() { if (tab._rescaleDisplay) tab._rescaleDisplay(); }, 500);
       } else if (s === 5) {
         tab.connected = false;
         updateStatusConn();
