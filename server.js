@@ -275,7 +275,7 @@ function handleGuacUpgrade(request, socket, head) {
             if (data.port) {
               console.log('VNC proxy on guacd:' + data.port);
               // Connect guacd to 127.0.0.1 (same container as proxy)
-              connectGuacVNC(ws, guacdHost, '127.0.0.1', data.port, '', width, height, dpi);
+              connectGuacVNC(ws, guacdHost, '127.0.0.1', data.port, password, width, height, dpi);
               return;
             }
           } catch(e) {}
@@ -393,7 +393,7 @@ function connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi)
     'swap-red-blue': 'false',
     'read-only': 'false',
     'cursor': 'remote',
-    'autoretry': '3',
+    'autoretry': '0',
     'force-lossless': 'true',
     'encodings': 'zrle ultra copyrect hextile zlib corre rre raw',
       };
