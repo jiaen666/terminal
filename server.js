@@ -444,23 +444,39 @@ function connectGuacVNC(ws, guacdHost, host, port, password, width, height, dpi)
 }
 
 
-// ===== VNC WebSocket Proxy =====
+// ===== VNC WebSocket Proxy (buffered) =====
 function handleVNCUpgrade(request, socket, head) {
   const query = url.parse(request.url, true).query;
   const host = query.host, vport = parseInt(query.port) || 5900;
   if (!host) { socket.write('HTTP/1.1 400 Bad Request\r\n\r\n'); socket.destroy(); return; }
   console.log(`VNC proxy connecting to ${host}:${vport}`);
-  const vncSocket = new net.Socket(); let ws = null;
+  const vncSocket = new net.Socket();
+  let ws = null;
+  const buffer = [];
+
   vncSocket.connect(vport, host, () => {
     const wsServer = new WebSocketServer({ noServer: true });
     wsServer.handleUpgrade(request, socket, head, (websocket) => {
       ws = websocket;
+      if (buffer.length > 0) {
+        for (const chunk of buffer) {
+          if (ws.readyState === 1) ws.send(chunk);
+        }
+        buffer.length = 0;
+      }
       ws.on('message', (d) => { if (vncSocket.writable) vncSocket.write(d); });
       ws.on('close', () => { try { vncSocket.destroy(); } catch(e) {} });
       ws.on('error', () => { try { vncSocket.destroy(); } catch(e) {} });
     });
   });
-  vncSocket.on('data', (d) => { if (ws?.readyState === 1) ws.send(d); });
+
+  vncSocket.on('data', (d) => {
+    if (ws && ws.readyState === 1) {
+      ws.send(d);
+    } else {
+      buffer.push(d);
+    }
+  });
   vncSocket.on('error', () => { try { ws?.close(); socket.destroy(); } catch(e) {} });
   vncSocket.on('close', () => { try { ws?.close(); } catch(e) {} });
   setTimeout(() => { if (!ws && !vncSocket.destroyed) { try { vncSocket.destroy(); socket.destroy(); } catch(e) {} } }, 15000);
