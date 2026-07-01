@@ -369,7 +369,7 @@ function reconnectTab(tab) {
     } else if (proto === 'rdp') {
       setupGuacRDP(tab);
     } else if (proto === 'vnc') {
-      setupVNC(tab);
+      setupGuacRDP(tab);
     } else {
       tab._autoReconnect = true;
       sendWS({ type: 'ssh-connect', tabId: tab.id, host: tab.host, port: tab.port, username: tab.username, password: tab.password, privateKey: tab.privateKey, termCols: tab.terminal?.cols, termRows: tab.terminal?.rows });
@@ -824,7 +824,7 @@ function connectToDevice(config) {
       tab.username = config.username || '';
       tab.password = config.password || '';
       tab.port = config.port || 5900;
-      setupVNC(tab);
+      setupGuacRDP(tab);
     } else {
       tab._autoReconnect = true;
       sendWS({ type: 'ssh-connect', tabId: tab.id, host: config.host, port: config.port || 22, username: config.username, password: config.password, privateKey: config.privateKey, termCols: tab.terminal?.cols, termRows: tab.terminal?.rows });
